@@ -1,12 +1,13 @@
 import type { State, Storage } from './libraryClient.ts';
+import { atlasDatabaseName } from './config.ts';
 
 function database(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('seenary-cloud-staging', 1);
+    const request = indexedDB.open(atlasDatabaseName, 1);
     request.onupgradeneeded = () => request.result.createObjectStore('accounts');
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
-    request.onblocked = () => reject(new Error('Close other staging tabs to upgrade local storage.'));
+    request.onblocked = () => reject(new Error('Close other Seenary tabs to upgrade local storage.'));
   });
 }
 export function browserStorage(namespace: string): Storage {

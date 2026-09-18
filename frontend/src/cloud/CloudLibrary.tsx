@@ -2,14 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import { LibraryClient, defaults, emptyState, fields } from './libraryClient.ts';
 import type { Entry, Fields, Reply, State } from './libraryClient.ts';
 import { accountLock, browserStorage } from './browserStorage.ts';
+import { atlasEndpoint, atlasLabel } from './config.ts';
 import './cloud.css';
 
-const endpoint = import.meta.env.VITE_API_BASE_URL || `http://${location.hostname}:3001`;
+const endpoint = atlasEndpoint;
 const storage = browserStorage(endpoint);
 const identityKey = `seenary-cloud-user:${endpoint}`;
 let lastRequest = 0;
 async function rpc(method: string, args: unknown[] = [], userId?: string): Promise<Reply> {
-  // Stay below staging's request budget, including large device uploads.
+  // Stay below the API request budget, including large device uploads.
   const wait = Math.max(0, lastRequest + 650 - Date.now());
   lastRequest = Date.now() + wait;
   await new Promise(resolve => setTimeout(resolve, wait));
@@ -34,7 +35,7 @@ export default function CloudLibrary() {
   const [user, setUser] = useState<{ id: string; username: string } | null>(null);
   const active = useRef<string | null>(null);
   const [state, setState] = useState<State>(emptyState);
-  const [message, setMessage] = useState('Sign in to Atlas staging.');
+  const [message, setMessage] = useState(`Sign in to ${atlasLabel}.`);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<Entry | null>(null);
   const [filter, setFilter] = useState('');
@@ -79,7 +80,7 @@ export default function CloudLibrary() {
       ...pending.request.patch, deleted: pending.request.action === 'delete' };
   }
   return <main className="cloud-library">
-    <header><span>Seenary · Atlas staging</span><h1>Your cloud library</h1><p>Favorites and personal entries, with a durable queue for offline changes.</p></header>
+    <header><span>Seenary · {atlasLabel}</span><h1>Your cloud library</h1><p>Favorites and personal entries, with a durable queue for offline changes.</p></header>
     <p role="status">{message}</p>
     {!user ? <form onSubmit={event => {
       event.preventDefault(); const data = new FormData(event.currentTarget); setBusy(true);

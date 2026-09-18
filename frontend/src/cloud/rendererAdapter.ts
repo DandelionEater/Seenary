@@ -3,9 +3,10 @@ import type { AnimeMedia, SaveListEntryPayload } from '../types/domain';
 import { LibraryClient, defaults, fields } from './libraryClient';
 import type { Entry, Fields, Media, Reply, State } from './libraryClient';
 import { accountLock, browserStorage } from './browserStorage';
+import { atlasEndpoint } from './config';
 
 type Api = typeof window.api;
-const endpoint = import.meta.env.VITE_API_BASE_URL || `http://${location.hostname}:3001`;
+const endpoint = atlasEndpoint;
 const storage = browserStorage(endpoint);
 const sessionKey = `seenary-atlas-renderer-session:${endpoint}`;
 type SessionUser = { id: string; username: string; [key: string]: unknown };
@@ -300,7 +301,7 @@ export function installAtlasRenderer(legacy: Api) {
     const name = String(property);
     if (handlers[name]) return handlers[name];
     if (publicReads.has(name)) return Reflect.get(target, property);
-    return async () => ({ ok: false, message: 'This operation is not available in Atlas staging yet. Use Cloud saves to manage your library.' });
+    return async () => ({ ok: false, message: 'This operation is not available in Atlas yet. Use Cloud saves to manage your library.' });
   } });
   const tick = async () => {
     if (!user || syncRunning) return;

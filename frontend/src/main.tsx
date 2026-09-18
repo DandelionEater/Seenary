@@ -2,19 +2,18 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
 import { installApiClient } from './apiClient.ts'
+import { isAtlasProduction } from './cloud/config.ts'
 import './index.css'
 
 const hostname = window.location.hostname.toLowerCase()
 const isHostedDesktopRenderer = hostname === 'web.seenary.app'
-const isHostedSeenary = ['seenary.app', 'www.seenary.app', 'web.seenary.app'].includes(hostname)
 const isDesktopRuntime = Boolean(
   window.desktopUpdater &&
   window.desktopEnvironment &&
   window.desktopWindow
 )
 
-const useAtlas = isHostedSeenary
-  || import.meta.env.VITE_ATLAS_PRODUCTION === 'true'
+const useAtlas = isAtlasProduction
   || import.meta.env.VITE_ATLAS_STAGING === 'true' && ['localhost', '127.0.0.1'].includes(location.hostname)
 
 if (useAtlas) {

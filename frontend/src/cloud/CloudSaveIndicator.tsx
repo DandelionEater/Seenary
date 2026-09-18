@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { browserStorage } from './browserStorage';
+import { atlasEndpoint, atlasLabel } from './config';
 
 export default function CloudSaveIndicator() {
-  const [label, setLabel] = useState('Cloud saves · Atlas staging');
+  const [label, setLabel] = useState(`Cloud saves · ${atlasLabel}`);
   useEffect(() => {
     let stopped = false;
-    const endpoint = import.meta.env.VITE_API_BASE_URL || `http://${location.hostname}:3001`;
+    const endpoint = atlasEndpoint;
     const key = `seenary-atlas-renderer-session:${endpoint}`;
     const storage = browserStorage(endpoint);
     const update = async () => {
@@ -16,7 +17,7 @@ export default function CloudSaveIndicator() {
         if (stopped || identity !== localStorage.getItem(key)) return;
         const errors = state?.pending.filter(item => item.error).length ?? 0;
         const pending = state?.pending.length ?? 0;
-        setLabel(errors ? `Cloud saves · ${errors} need review` : pending ? `Cloud saves · ${pending} pending` : 'Cloud saves · Atlas staging');
+        setLabel(errors ? `Cloud saves · ${errors} need review` : pending ? `Cloud saves · ${pending} pending` : `Cloud saves · ${atlasLabel}`);
       } catch { if (!stopped) setLabel('Cloud saves · storage unavailable'); }
     };
     void update();
