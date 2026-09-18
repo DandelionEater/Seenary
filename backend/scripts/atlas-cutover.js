@@ -4,13 +4,17 @@ const crypto = require('node:crypto');
 const { parseArgs } = require('node:util');
 const { connectRuntime, reportError } = require('../atlas/connection');
 const { collections } = require('../atlas/accounts');
+const { setupAccounts } = require('../atlas/accounts');
 const { readSqliteAccounts, importAccounts } = require('../atlas/importAccounts');
 const { providerCollections } = require('../atlas/providerSchema');
+const { setupProviders } = require('../atlas/providerSchema');
 const { readProviderData, importProviderData } = require('../atlas/importProviders');
 const { createTokenCipher } = require('../atlas/tokenCipher');
 const { mediaCollections } = require('../atlas/media');
+const { setupMedia } = require('../atlas/media');
 const { readMediaData, importMedia } = require('../atlas/importMedia');
 const { libraryCollections } = require('../atlas/librarySchema');
+const { setupLibrary } = require('../atlas/librarySchema');
 const { readLibraryData, importLibrary } = require('../atlas/importLibrary');
 
 function hashFile(filename) { return crypto.createHash('sha256').update(fs.readFileSync(filename)).digest('hex'); }
@@ -30,6 +34,7 @@ async function main() {
   const connection = await connectRuntime();
   try {
     const verify = positionals[0] === 'reconcile'; const stage = positionals[0] === 'stage';
+    if (stage) { await setupAccounts(connection.db); await setupProviders(connection.db); await setupMedia(connection.db); await setupLibrary(connection.db); }
     const reports = {};
     reports.accounts = await importAccounts(collections(connection.db), data.accounts, values.source, stage, verify, stage);
     reports.providers = await importProviderData({ client: connection.client, repo: providerCollections(connection.db), data: data.providers,

@@ -3,6 +3,8 @@ const { BSON: { calculateObjectSize } } = require('mongodb');
 const { validId, fillMissing } = require('./media');
 const fingerprint = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function containsFields(actual, expected) {
+  // Migration is append/refresh in place: an absent or null source value never erases richer saved metadata.
+  if (expected == null) return true;
   if (expected && typeof expected === 'object' && !Array.isArray(expected)) {
     return actual && Object.entries(expected).every(([key, value]) => Object.hasOwn(actual, key) && containsFields(actual[key], value));
   }
