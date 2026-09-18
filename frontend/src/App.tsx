@@ -786,6 +786,9 @@ function App() {
       }>).detail;
 
       void loadTrackedEntries();
+      if (!detail) {
+        return;
+      }
       showSyncToast(
         detail?.ok ? "success" : "error",
         detail?.ok
@@ -964,6 +967,7 @@ function App() {
 
   const handlePullFromAniList = async () => {
     const result = await window.api.pullFromAniList();
+    const queued = result.ok && "queued" in result && result.queued;
 
     if (result.ok) {
       await loadTrackedEntries();
@@ -972,9 +976,11 @@ function App() {
     showSyncToast(
       result.ok ? (result.partial ? "warning" : "success") : "error",
       result.ok
-        ? result.partial
-          ? "AniList update partially complete"
-          : "AniList update complete"
+        ? queued
+          ? "AniList update started"
+          : result.partial
+            ? "AniList update partially complete"
+            : "AniList update complete"
         : "AniList update failed",
       result.message
     );
@@ -984,6 +990,7 @@ function App() {
 
   const handlePullFromMal = async () => {
     const result = await window.api.pullFromMal();
+    const queued = result.ok && "queued" in result && result.queued;
 
     if (result.ok) {
       await loadTrackedEntries();
@@ -992,9 +999,11 @@ function App() {
     showSyncToast(
       result.ok ? (result.partial ? "warning" : "success") : "error",
       result.ok
-        ? result.partial
-          ? "MyAnimeList update partially complete"
-          : "MyAnimeList update complete"
+        ? queued
+          ? "MyAnimeList update started"
+          : result.partial
+            ? "MyAnimeList update partially complete"
+            : "MyAnimeList update complete"
         : "MyAnimeList update failed",
       result.message
     );

@@ -35,7 +35,11 @@ export function installAtlasRenderer(legacy: Api) {
   let syncRunning = false;
   let lastRequest = 0;
   const importPreviews = new Map<string, ImportPreview>();
-  const notify = () => window.dispatchEvent(new Event('seenary:local-library-updated'));
+  const notify = (detail?: { ok: boolean; provider: string; message: string }) => window.dispatchEvent(
+    detail
+      ? new CustomEvent('seenary:local-library-updated', { detail })
+      : new Event('seenary:local-library-updated')
+  );
   async function rpc(method: string, args: unknown[] = [], expectedUserId?: string): Promise<AccountReply> {
     const wait = Math.max(0, lastRequest + 650 - Date.now()); lastRequest = Date.now() + wait;
     await new Promise(resolve => setTimeout(resolve, wait));
@@ -220,7 +224,10 @@ export function installAtlasRenderer(legacy: Api) {
         if (Number.isFinite(completedAt) && completedAt >= requestedAt) {
           refreshNeeded = true;
           await load();
-          notify();
+          const counts = status.sync?.counts;
+          const label = provider === 'anilist' ? 'AniList' : 'MyAnimeList';
+          notify({ ok: true, provider: label,
+            message: `${label} update complete. ${counts?.applied ?? 0} entries were added or updated; ${counts?.skipped ?? 0} were already current.` });
           return;
         }
         if (status.sync?.lastOutcome === 'reauthorization-required') return;
@@ -234,7 +241,7 @@ export function installAtlasRenderer(legacy: Api) {
     const requestedAt = Date.parse(String(queued.requestedAt));
     if (Number.isFinite(requestedAt)) void watchProviderPull(provider, requestedAt);
     const label = provider === 'anilist' ? 'AniList' : 'MyAnimeList';
-    return { ok: true, message: queued.alreadyQueued
+    return { ok: true, queued: true, message: queued.alreadyQueued
       ? `${label} update is already running in the background.`
       : `${label} update started in the background. The first reconciliation may take several minutes.` };
   }
@@ -351,7 +358,14 @@ export function installAtlasRenderer(legacy: Api) {
   const tick = async () => {
     if (!user || syncRunning) return;
     syncRunning = true;
-    try { const result = await sync(); listeners.forEach(listener => listener(result)); }
+    try {
+      const state = await load();
+      if (!state.pending.length) return;
+      const result = await sync();
+      if (!result.ok || result.synced > 0 || result.failed > 0 || result.pending > 0) {
+        listeners.forEach(listener => listener(result));
+      }
+    }
     catch { /* Pending requests remain durable; the Cloud saves panel exposes their status. */ }
     finally { syncRunning = false; }
   };
