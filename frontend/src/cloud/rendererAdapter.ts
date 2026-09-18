@@ -10,7 +10,18 @@ const endpoint = atlasEndpoint;
 const storage = browserStorage(endpoint);
 const sessionKey = `seenary-atlas-renderer-session:${endpoint}`;
 type SessionUser = { id: string; username: string; [key: string]: unknown };
-type AccountReply = Reply & { account?: { provider: 'anilist' | 'mal'; providerUserId: string; username: string; updatedAt: string } | null; settings?: { autoSyncEnabled: boolean } };
+type AccountReply = Reply & {
+  account?: { provider: 'anilist' | 'mal'; providerUserId: string; username: string; updatedAt: string } | null;
+  settings?: { autoSyncEnabled: boolean };
+  requestedAt?: string;
+  sync?: {
+    running: boolean;
+    requestedAt: string | null;
+    lastSuccessAt: string | null;
+    lastOutcome: string | null;
+    counts: { applied?: number; skipped?: number; review?: number } | null;
+  } | null;
+};
 type ImportItem = SaveListEntryPayload & { animeId: number; mediaType: 'ANIME' | 'MANGA'; media: AnimeMedia; isRepeating?: boolean };
 type ImportPreview = { ok: boolean; username: string; preview: { groups: { status: string; mediaType: 'ANIME' | 'MANGA'; items: ImportItem[] }[] } };
 
@@ -195,6 +206,28 @@ export function installAtlasRenderer(legacy: Api) {
       autoSyncEnabled: result.settings?.autoSyncEnabled ?? false, pendingCount: (await load()).pending.length,
       message: 'Cloud edits are queued separately from provider delivery.' };
   }
+  async function pullProvider(provider: 'anilist' | 'mal') {
+    const queued = await rpc('requestProviderSync', [provider], user?.id);
+    if (!queued.ok) return queued;
+    const requestedAt = Date.parse(String(queued.requestedAt));
+    const deadline = Date.now() + 120000;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      const status = await rpc('getProviderSyncStatus', [provider], user?.id);
+      const completedAt = Date.parse(String(status.sync?.lastSuccessAt || ''));
+      if (Number.isFinite(completedAt) && completedAt >= requestedAt) {
+        refreshNeeded = true;
+        await load();
+        notify();
+        const counts = status.sync?.counts as { applied?: number; skipped?: number; review?: number } | undefined;
+        return { ok: true, summary: counts, message: `${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} update complete. ${counts?.applied ?? 0} entries updated or added.` };
+      }
+      if (status.sync?.lastOutcome === 'reauthorization-required') {
+        return { ok: false, message: `Reconnect ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} before updating.` };
+      }
+    }
+    return { ok: true, message: `${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} update is queued and will continue in the background.` };
+  }
   async function previewImport(username: string, provider: 'anilist' | 'mal' = 'anilist') {
     const id = user?.id;
     if (!id) throw new Error('Sign in before importing.');
@@ -277,6 +310,8 @@ export function installAtlasRenderer(legacy: Api) {
     getSyncStatus: syncStatus,
     setAutoSync: async (enabled: boolean) => { const result = await rpc('setAccountSettings', [{ autoSyncEnabled: enabled }], user?.id); return result.ok ? syncStatus() : result; },
     runSyncNow: sync,
+    pullFromAniList: () => pullProvider('anilist'),
+    pullFromMal: () => pullProvider('mal'),
     onAutoSyncComplete: (callback: (result: unknown) => void) => { listeners.add(callback); return () => listeners.delete(callback); },
     onSyncProgress: () => () => {},
     getAniListLinkStatus: () => linkStatus('anilist'), getMalLinkStatus: () => linkStatus('mal'),

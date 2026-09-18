@@ -156,6 +156,35 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
         return { ok: true, settings };
       });
     },
+    async requestInboundSync(token, provider) {
+      const user = await accounts.getAuthenticatedUser(token);
+      if (!user) return fail('You must be logged in.');
+      if (!validProvider(provider)) return fail('Invalid provider.');
+      const link = await repo.providerAccounts.findOne({ userId: user._id, provider });
+      if (!link) return fail(`No linked ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} account.`);
+      const requestedAt = new Date();
+      await repo.providerRefreshStates.updateOne({ _id: link._id }, {
+        $set: { userId: user._id, provider, linkRevision: link.revision,
+          nextAttemptAt: requestedAt, manualRequestedAt: requestedAt },
+        $setOnInsert: { revision: 0 },
+      }, { upsert: true });
+      return { ok: true, requestedAt };
+    },
+    async inboundSyncStatus(token, provider) {
+      const user = await accounts.getAuthenticatedUser(token);
+      if (!user) return fail('You must be logged in.');
+      if (!validProvider(provider)) return fail('Invalid provider.');
+      const link = await repo.providerAccounts.findOne({ userId: user._id, provider });
+      if (!link) return fail(`No linked ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} account.`);
+      const state = await repo.providerRefreshStates.findOne({ _id: link._id });
+      return { ok: true, sync: state ? {
+        running: Boolean(state.leaseUntil && new Date(state.leaseUntil) > new Date()),
+        requestedAt: state.manualRequestedAt || null,
+        lastSuccessAt: state.lastSuccessAt || null,
+        lastOutcome: state.lastOutcome || null,
+        counts: state.lastCounts || null,
+      } : null };
+    },
     async deleteAccount(token, username, password) {
       const user = await accounts.getAuthenticatedUser(token);
       if (!user || username !== user.username || typeof password !== 'string' || !password || password.length > 128

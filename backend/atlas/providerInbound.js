@@ -102,7 +102,7 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
   }
   async function finish(claim, update) {
     return repo.providerRefreshStates.updateOne({ _id: claim.state._id, leaseOwner: claim.owner }, { ...update,
-      $unset: { leaseOwner: '', leaseUntil: '' }, $inc: { revision: 1 } });
+      $unset: { ...(update.$unset || {}), leaseOwner: '', leaseUntil: '' }, $inc: { revision: 1 } });
   }
   const service = {
     seed,
@@ -125,8 +125,10 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
       if (!state) return { status: 'claim-lost' };
       let link = await repo.providerAccounts.findOne({ _id: state._id, userId: state.userId, provider: state.provider });
       const settings = await repo.accountSettings.findOne({ _id: state.userId });
-      if (!link || settings?.autoSyncEnabled !== true || link.needsReauthorization) {
-        await finish(claim, { $set: { nextAttemptAt: new Date(observedAt + intervalMs), lastOutcome: !link ? 'unlinked' : 'disabled' } });
+      const manual = Boolean(state.manualRequestedAt);
+      if (!link || (!manual && settings?.autoSyncEnabled !== true) || link.needsReauthorization) {
+        await finish(claim, { $set: { nextAttemptAt: new Date(observedAt + intervalMs), lastOutcome: !link ? 'unlinked' : link.needsReauthorization ? 'reauthorization-required' : 'disabled' },
+          ...(manual ? { $unset: { manualRequestedAt: '' } } : {}) });
         return { status: 'skipped' };
       }
       try {
@@ -159,7 +161,7 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
           if (outcome === 'applied') counts.applied++; else counts.skipped++;
         }
         await finish(claim, { $set: { linkRevision: link.revision, nextAttemptAt: new Date(now() + intervalMs), lastSuccessAt: new Date(now()),
-          lastOutcome: 'success', lastCounts: counts, attempts: 0 } });
+          lastOutcome: 'success', lastCounts: counts, attempts: 0 }, ...(manual ? { $unset: { manualRequestedAt: '' } } : {}) });
         return { status: 'succeeded', counts };
       } catch (error) {
         const attempts = (state.attempts || 0) + 1; const retry = error.retryAfter ? error.retryAfter * 1000 : Math.min(30000 * 2 ** (attempts - 1), 6 * 3600000);

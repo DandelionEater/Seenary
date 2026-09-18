@@ -48,6 +48,19 @@ async function scenario(repo, client, media) {
   assert.equal(await repo.jobs.countDocuments({}), 0, 'inbound reconciliation must not echo into the outbound queue');
   assert.equal((await repo.libraryChanges.findOne({ userId })).source, 'provider:anilist');
 
+  const repoManual = localRepo(); const manualUser = await link(repoManual, 'manual', 'anilist');
+  await repoManual.accountSettings.updateOne({ _id: manualUser }, { $set: { autoSyncEnabled: false } });
+  await repoManual.providerRefreshStates.insertOne({ _id: 'link-manual', userId: manualUser, provider: 'anilist',
+    linkRevision: 1, revision: 0, nextAttemptAt: new Date(0), manualRequestedAt: new Date(clock) });
+  const manualAdapters = { ...adapters, pull: async (_provider, token, type) => {
+    assert.equal(token, 'manual-access'); return type === 'ANIME' ? alPayload(14) : { lists: [] };
+  } };
+  inbound = createProviderInbound({ client: fakeClient, repo: repoManual, media: localMedia(repoManual), cipher, adapters: manualAdapters,
+    now: () => clock, spacing: { anilist: 0, mal: 0 } });
+  result = await inbound.runOnce(1); assert.equal(result.results[0].status, 'succeeded');
+  assert.equal(await repoManual.libraryEntries.countDocuments({ userId: manualUser }), 1, 'manual pull runs while automatic sync is disabled');
+  assert.equal((await repoManual.providerRefreshStates.findOne({ _id: 'link-manual' })).manualRequestedAt, undefined);
+
   const repoRace = localRepo(); const raceUser = await link(repoRace, 'race', 'anilist'); const raceMedia = localMedia(repoRace);
   document = await raceMedia.ensure('ANIME', 'anilist', 12);
   await repoRace.libraryEntries.insertOne({ _id: JSON.stringify([raceUser, document._id]), userId: raceUser, mediaId: document._id, type: 'ANIME',

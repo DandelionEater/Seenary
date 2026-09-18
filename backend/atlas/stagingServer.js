@@ -83,7 +83,7 @@ function createStagingServer(service, providers = null, media = null, library = 
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { send(400, { ok: false }); return; }
       if (!body || typeof body.method !== 'string' || !Array.isArray(body.args)) { send(400, { ok: false }); return; }
       if (size > 8192 && body.method !== 'mutateLibraryEntry') { send(413, { ok: false, message: 'Request too large.' }); return; }
-      if (['register', 'login', 'changePassword', 'beginProviderLogin', 'beginProviderLink', 'unlinkProvider', 'setLocalPassword', 'deleteAccount', 'refreshProvider'].includes(body.method) && !consume(`auth:${clientAddress}`, config.authLimit)) {
+      if (['register', 'login', 'changePassword', 'beginProviderLogin', 'beginProviderLink', 'unlinkProvider', 'setLocalPassword', 'deleteAccount', 'refreshProvider', 'requestProviderSync'].includes(body.method) && !consume(`auth:${clientAddress}`, config.authLimit)) {
         send(429, { ok: false, message: 'Too many authentication attempts.' }); return;
       }
       const token = getToken(req, config.cookieName);
@@ -173,6 +173,8 @@ function createStagingServer(service, providers = null, media = null, library = 
         case 'exportAccountData':
         case 'getProviderAccount':
         case 'refreshProvider':
+        case 'requestProviderSync':
+        case 'getProviderSyncStatus':
         case 'setLocalPassword':
         case 'unlinkProvider':
         case 'getAccountSettings':
@@ -181,6 +183,8 @@ function createStagingServer(service, providers = null, media = null, library = 
           if (!providers) { send(404, { ok: false }); return; }
           const handlers = {
             exportAccountData: () => providers.exportAccount(token), getProviderAccount: () => providers.getLink(token), refreshProvider: () => providers.refresh(token),
+            requestProviderSync: () => providers.requestInboundSync(token, body.args[0]),
+            getProviderSyncStatus: () => providers.inboundSyncStatus(token, body.args[0]),
             setLocalPassword: () => providers.setLocalPassword(token, body.args[0]),
             unlinkProvider: () => providers.unlink(token, body.args[0]),
             getAccountSettings: () => providers.settings(token), setAccountSettings: () => providers.settings(token, body.args[0]),
