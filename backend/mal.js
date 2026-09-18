@@ -291,7 +291,7 @@ async function getUserMangaList(username, options = {}) {
     options.onProgress?.({ stage: 'fetching', current: data.length, total: null, mediaType: 'MANGA' });
   } while (nextUrl && data.length < (options.maxEntries || 5000));
 
-  return { userName: username, data };
+  return { userName: username, data, truncated: Boolean(nextUrl) };
 }
 
 async function getUserAnimeList(username, options = {}) {
@@ -344,6 +344,7 @@ async function getUserAnimeList(username, options = {}) {
   return {
     userName: username,
     data,
+    truncated: Boolean(nextUrl),
   };
 }
 
@@ -423,6 +424,16 @@ async function getAnimeDetails(malAnimeId, options = {}) {
       ].join(','),
     },
   });
+}
+
+// Shared metadata uses application credentials only. Persisted cache retries own backoff;
+// do not hold a refresh lease while the legacy transport sleeps through retries.
+async function getPublicMediaDetails(type, id) {
+  if (!['ANIME', 'MANGA'].includes(type) || !Number.isSafeInteger(id) || id < 1) throw new Error('Invalid MAL identity.');
+  const fields = ['id', 'title', 'main_picture', 'alternative_titles', 'start_date', 'end_date', 'synopsis',
+    'mean', 'rank', 'popularity', 'num_list_users', 'num_scoring_users', 'nsfw', 'genres', 'media_type', 'status',
+    ...(type === 'ANIME' ? ['num_episodes', 'studios', 'source', 'rating', 'average_episode_duration'] : ['num_chapters', 'num_volumes'])];
+  return malRequest(`/${type.toLowerCase()}/${id}`, { query: { fields: fields.join(',') } });
 }
 
 async function fetchNextPage(url, accessToken) {
@@ -570,6 +581,7 @@ async function deleteMangaListStatus(accessToken, malMangaId) {
 }
 
 module.exports = {
+  getPublicMediaDetails,
   exchangeCodeForToken,
   refreshAccessToken,
   getViewer,

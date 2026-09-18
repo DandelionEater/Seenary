@@ -103,6 +103,7 @@ type MediaSourceReference = {
 };
 
 export type AnimeMedia = {
+  warning?: string;
   id: number;
   idMal?: number | null;
   type?: MediaType | string | null;

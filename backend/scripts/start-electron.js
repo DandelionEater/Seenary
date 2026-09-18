@@ -18,7 +18,7 @@ const userDataDir = path.join(
 );
 const logPath = path.join(userDataDir, 'electron-dev.log');
 const mainPath = path.join(packageRoot, 'scripts', 'electron-main-wrapper.js');
-const nativeModuleProbe = "require('better-sqlite3'); process.stdout.write('ok')";
+const nativeModuleProbe = "const Database = require('better-sqlite3'); const db = new Database(':memory:'); db.prepare('SELECT 1').get(); db.close(); process.stdout.write('ok')";
 const args = [
   '--disable-crash-reporter',
   '--disable-gpu',

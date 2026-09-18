@@ -11,7 +11,19 @@ const isDesktopRuntime = Boolean(
   window.desktopWindow
 )
 
-if (isHostedDesktopRenderer && !isDesktopRuntime) {
+if (import.meta.env.VITE_ATLAS_STAGING === 'true' && ['localhost', '127.0.0.1'].includes(location.hostname)) {
+  if (new URLSearchParams(location.search).has('atlasReview')) {
+    void import('./cloud/CloudLibrary.tsx').then(({ default: CloudLibrary }) => {
+      ReactDOM.createRoot(document.getElementById('root')!).render(<><a href="/">Back to Seenary</a><CloudLibrary /></>)
+    })
+  } else {
+    installApiClient()
+    void Promise.all([import('./cloud/rendererAdapter.ts'), import('./cloud/CloudSaveIndicator.tsx')]).then(([{ installAtlasRenderer }, { default: CloudSaveIndicator }]) => {
+      installAtlasRenderer(window.api)
+      ReactDOM.createRoot(document.getElementById('root')!).render(<><App /><CloudSaveIndicator /></>)
+    })
+  }
+} else if (isHostedDesktopRenderer && !isDesktopRuntime) {
   window.location.replace('https://seenary.app')
 } else {
   installApiClient()

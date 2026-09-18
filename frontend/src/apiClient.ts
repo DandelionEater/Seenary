@@ -117,6 +117,7 @@ async function rpc(
       credentials: "include",
       headers: {
         "Content-Type": "application/json",
+        "X-Seenary-Version": __APP_VERSION__,
       },
       body: JSON.stringify({ method, args }),
       signal: timeoutController?.signal ?? options.signal,

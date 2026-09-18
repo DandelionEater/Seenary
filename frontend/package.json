@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:cloud-library": "node scripts/cloud-library-smoke.mjs",
+    "dev:atlas": "node scripts/dev-atlas.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

@@ -17,6 +17,7 @@ let downloadedUpdateInfo = null;
 let handlersRegistered = false;
 let updaterEventsRegistered = false;
 let activeCheckPromise = null;
+let activeDownloadPromise = null;
 
 function isAutoUpdateAvailable() {
   return process.platform !== 'linux';
@@ -57,6 +58,12 @@ function setupAutoUpdates(win) {
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
+  // Seenary wraps Electron Builder's NSIS output in its own bootstrapper. The
+  // installed updater cache therefore contains the inner installer, while the
+  // published blockmap describes the outer bootstrapper. A differential update
+  // can download most of the installer before failing validation and falling
+  // back to a second, full download, so use one verified full transfer instead.
+  autoUpdater.disableDifferentialDownload = true;
   autoUpdater.allowPrerelease = app.getVersion().includes('-');
   registerUpdaterEvents();
 
@@ -198,7 +205,7 @@ function registerUpdaterIpc() {
       return { ok: true, manual: true };
     }
 
-    if (!app.isPackaged || !isAutoUpdateAvailable() || isDownloading) {
+    if (!app.isPackaged || !isAutoUpdateAvailable()) {
       return {
         ok: false,
         message: isAutoUpdateAvailable()
@@ -207,19 +214,32 @@ function registerUpdaterIpc() {
       };
     }
 
+    if (downloadedUpdateInfo) {
+      return { ok: true, downloaded: true };
+    }
+
+    if (activeDownloadPromise) {
+      return activeDownloadPromise;
+    }
+
     isDownloading = true;
     sendToRenderer('updater:downloading', { percent: 0 });
 
-    try {
-      await autoUpdater.downloadUpdate();
-      return { ok: true };
-    } catch (error) {
-      handleUpdateError(error);
-      return {
-        ok: false,
-        message: error.message || 'Seenary could not download the update.',
-      };
-    }
+    activeDownloadPromise = autoUpdater
+      .downloadUpdate()
+      .then(() => ({ ok: true }))
+      .catch((error) => {
+        handleUpdateError(error);
+        return {
+          ok: false,
+          message: error.message || 'Seenary could not download the update.',
+        };
+      })
+      .finally(() => {
+        activeDownloadPromise = null;
+      });
+
+    return activeDownloadPromise;
   });
 
   ipcMain.handle('updater:install', () => {

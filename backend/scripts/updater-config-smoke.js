@@ -41,13 +41,19 @@ for (const [label, source] of [
 }
 
 function exerciseUpdater(version, platform = 'win32') {
+  let downloadCalls = 0;
   const autoUpdater = {
     autoDownload: true,
     autoInstallOnAppQuit: true,
+    disableDifferentialDownload: false,
     allowPrerelease: null,
     on() {},
     checkForUpdates() {
       return Promise.resolve();
+    },
+    downloadUpdate() {
+      downloadCalls += 1;
+      return Promise.resolve([]);
     },
     setFeedURL() {
       throw new Error('The packaged app-update.yml should configure the GitHub provider.');
@@ -90,13 +96,15 @@ function exerciseUpdater(version, platform = 'win32') {
     webContents: { send() {} },
   });
 
-  return { autoUpdater, handlers };
+  return { autoUpdater, handlers, getDownloadCalls: () => downloadCalls };
 }
 
-const { autoUpdater: betaUpdater } = exerciseUpdater('0.1.9-beta');
+const betaEnvironment = exerciseUpdater('0.1.9-beta');
+const { autoUpdater: betaUpdater } = betaEnvironment;
 assert.equal(betaUpdater.allowPrerelease, true);
 assert.equal(betaUpdater.autoDownload, false);
 assert.equal(betaUpdater.autoInstallOnAppQuit, false);
+assert.equal(betaUpdater.disableDifferentialDownload, true);
 
 const { autoUpdater: stableUpdater } = exerciseUpdater('0.2.0');
 assert.equal(stableUpdater.allowPrerelease, false);
@@ -109,4 +117,18 @@ assert.equal(linuxState.manualDownload, true);
 assert.match(updaterSource, /api\.github\.com\/repos\/DandelionEater\/Seenary\/releases/);
 assert.match(updaterSource, /https:\/\/seenary\.app/);
 
-console.log('GitHub updater configuration checks passed.');
+Promise.all([
+  betaEnvironment.handlers.get('updater:download')(),
+  betaEnvironment.handlers.get('updater:download')(),
+])
+  .then((results) => {
+    assert.equal(betaEnvironment.getDownloadCalls(), 1);
+    assert.equal(results.length, 2);
+    assert.equal(results[0].ok, true);
+    assert.equal(results[1].ok, true);
+    console.log('GitHub updater configuration checks passed.');
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

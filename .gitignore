@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+backend/.cutover-backups/
 backend/node_modules/
 frontend/node_modules/
 
@@ -19,6 +20,7 @@ release-notes-archive/
 # Local release checklist
 update-instructions.md
 /planned-updates.md
+/docs/cloud-migration-plan.md
 
 # Hostinger web configuration uploaded manually
 /.htaccess
