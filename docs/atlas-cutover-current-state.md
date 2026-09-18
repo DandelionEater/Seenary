@@ -23,7 +23,7 @@ The production Atlas backend is live at `https://api.seenary.app`. Commit `de223
 
 ## Remaining cutover work
 
-1. Configure the production frontend build with `VITE_ATLAS_PRODUCTION=true` and `VITE_API_BASE_URL=https://api.seenary.app`, then redeploy it.
+1. Deploy the frontend domain switch that makes `seenary.app`, `www.seenary.app`, and `web.seenary.app` use the Atlas renderer automatically. Hostinger's static frontend does not expose environment variables; the API client already defaults to `https://api.seenary.app` on hosted domains.
 2. Verify the deployed frontend uses the Atlas renderer/API path.
 3. Run a small live cohort check: login, library read, one reversible library write, provider status/refresh, and analytics consent behavior.
 4. Inspect API health and worker queues after that write.

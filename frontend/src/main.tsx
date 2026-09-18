@@ -4,14 +4,17 @@ import App from './App.tsx'
 import { installApiClient } from './apiClient.ts'
 import './index.css'
 
-const isHostedDesktopRenderer = window.location.hostname.toLowerCase() === 'web.seenary.app'
+const hostname = window.location.hostname.toLowerCase()
+const isHostedDesktopRenderer = hostname === 'web.seenary.app'
+const isHostedSeenary = ['seenary.app', 'www.seenary.app', 'web.seenary.app'].includes(hostname)
 const isDesktopRuntime = Boolean(
   window.desktopUpdater &&
   window.desktopEnvironment &&
   window.desktopWindow
 )
 
-const useAtlas = import.meta.env.VITE_ATLAS_PRODUCTION === 'true'
+const useAtlas = isHostedSeenary
+  || import.meta.env.VITE_ATLAS_PRODUCTION === 'true'
   || import.meta.env.VITE_ATLAS_STAGING === 'true' && ['localhost', '127.0.0.1'].includes(location.hostname)
 
 if (useAtlas) {
