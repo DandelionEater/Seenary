@@ -2,6 +2,8 @@
 
 Updated: 2026-09-18 after Batch 10 checkpoint 3.
 
+Pre-cutover preparation commit `fcd240b` is pushed to `main`. The current safe boundary is immediately before the live SQLite freeze: wait for Hostinger to deploy that commit, set only `LEGACY_WRITE_FREEZE=true`, keep the start command on `npm start`, restart/redeploy, and verify `/health` reports `writeFrozen: true` before taking the final snapshot.
+
 ## Completed and verified
 
 - Batches 1–9 are complete in staging.
