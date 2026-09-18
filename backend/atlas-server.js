@@ -31,5 +31,7 @@ async function main() {
   } finally { if (worker && !worker.killed) worker.kill('SIGTERM'); if (server?.listening) server.close(); await connection.close(); }
 }
 
-if (require.main === module) main().catch(error => { reportError(error); process.exitCode = 1; });
+// Hostinger loads the configured entry file through its own Node.js wrapper, so
+// require.main is not this module. Start during evaluation, matching server.js.
+main().catch(error => { reportError(error); process.exitCode = 1; });
 module.exports = { main };
