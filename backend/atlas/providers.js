@@ -163,6 +163,10 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
       const link = await repo.providerAccounts.findOne({ userId: user._id, provider });
       if (!link) return fail(`No linked ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} account.`);
       const requestedAt = new Date();
+      const pending = await repo.providerRefreshStates.findOne({ _id: link._id });
+      if (pending?.manualRequestedAt || pending?.leaseUntil && new Date(pending.leaseUntil) > requestedAt) {
+        return { ok: true, requestedAt: pending.manualRequestedAt || requestedAt, alreadyQueued: true };
+      }
       await repo.providerRefreshStates.updateOne({ _id: link._id }, {
         $set: { userId: user._id, provider, linkRevision: link.revision,
           nextAttemptAt: requestedAt, manualRequestedAt: requestedAt },

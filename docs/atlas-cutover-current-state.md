@@ -35,3 +35,9 @@ Rollback before any post-cutover Atlas-only writes: set Hostinger's backend entr
 ## Security follow-up
 
 The analytics report password was visible in a setup screenshot shared in the conversation. Rotate that password in Hostinger after the service and frontend are stable.
+
+## Live cohort findings
+
+- Password login and the migrated cloud library load successfully for the first production cohort account.
+- Its first manual AniList reconciliation completed on 2026-09-18 with 373 entries added or updated, 256 already current, and zero mapping reviews. The resulting active library contains 607 anime and 23 manga. AniList reported 606 anime, so the extra Seenary anime was preserved under the append-without-delete policy.
+- The first reconciliation took about 2 minutes 46 seconds. The follow-up UI change returns immediately while reconciliation continues, refreshes the cloud library after completion, and deduplicates clicks made while a request is active.

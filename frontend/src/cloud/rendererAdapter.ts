@@ -14,6 +14,7 @@ type AccountReply = Reply & {
   account?: { provider: 'anilist' | 'mal'; providerUserId: string; username: string; updatedAt: string } | null;
   settings?: { autoSyncEnabled: boolean };
   requestedAt?: string;
+  alreadyQueued?: boolean;
   sync?: {
     running: boolean;
     requestedAt: string | null;
@@ -206,27 +207,36 @@ export function installAtlasRenderer(legacy: Api) {
       autoSyncEnabled: result.settings?.autoSyncEnabled ?? false, pendingCount: (await load()).pending.length,
       message: 'Cloud edits are queued separately from provider delivery.' };
   }
+  const watchedProviderPulls = new Set<string>();
+  async function watchProviderPull(provider: 'anilist' | 'mal', requestedAt: number) {
+    if (watchedProviderPulls.has(provider)) return;
+    watchedProviderPulls.add(provider);
+    try {
+      const deadline = Date.now() + 10 * 60000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        const status = await rpc('getProviderSyncStatus', [provider], user?.id);
+        const completedAt = Date.parse(String(status.sync?.lastSuccessAt || ''));
+        if (Number.isFinite(completedAt) && completedAt >= requestedAt) {
+          refreshNeeded = true;
+          await load();
+          notify();
+          return;
+        }
+        if (status.sync?.lastOutcome === 'reauthorization-required') return;
+      }
+    } catch { /* The worker keeps running; the regular cloud refresh will catch up. */ }
+    finally { watchedProviderPulls.delete(provider); }
+  }
   async function pullProvider(provider: 'anilist' | 'mal') {
     const queued = await rpc('requestProviderSync', [provider], user?.id);
     if (!queued.ok) return queued;
     const requestedAt = Date.parse(String(queued.requestedAt));
-    const deadline = Date.now() + 120000;
-    while (Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      const status = await rpc('getProviderSyncStatus', [provider], user?.id);
-      const completedAt = Date.parse(String(status.sync?.lastSuccessAt || ''));
-      if (Number.isFinite(completedAt) && completedAt >= requestedAt) {
-        refreshNeeded = true;
-        await load();
-        notify();
-        const counts = status.sync?.counts as { applied?: number; skipped?: number; review?: number } | undefined;
-        return { ok: true, summary: counts, message: `${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} update complete. ${counts?.applied ?? 0} entries updated or added.` };
-      }
-      if (status.sync?.lastOutcome === 'reauthorization-required') {
-        return { ok: false, message: `Reconnect ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} before updating.` };
-      }
-    }
-    return { ok: true, message: `${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} update is queued and will continue in the background.` };
+    if (Number.isFinite(requestedAt)) void watchProviderPull(provider, requestedAt);
+    const label = provider === 'anilist' ? 'AniList' : 'MyAnimeList';
+    return { ok: true, message: queued.alreadyQueued
+      ? `${label} update is already running in the background.`
+      : `${label} update started in the background. The first reconciliation may take several minutes.` };
   }
   async function previewImport(username: string, provider: 'anilist' | 'mal' = 'anilist') {
     const id = user?.id;
