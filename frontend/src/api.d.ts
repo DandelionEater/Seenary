@@ -3,6 +3,7 @@ export {};
 declare global {
   interface ImportMetaEnv {
     readonly VITE_ATLAS_STAGING?: string;
+    readonly VITE_ATLAS_PRODUCTION?: string;
     readonly VITE_API_BASE_URL?: string;
   }
 

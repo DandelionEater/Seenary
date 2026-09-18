@@ -5,7 +5,7 @@ import type { Entry, Fields, Media, Reply, State } from './libraryClient';
 import { accountLock, browserStorage } from './browserStorage';
 
 type Api = typeof window.api;
-const endpoint = `http://${location.hostname}:3001`;
+const endpoint = import.meta.env.VITE_API_BASE_URL || `http://${location.hostname}:3001`;
 const storage = browserStorage(endpoint);
 const sessionKey = `seenary-atlas-renderer-session:${endpoint}`;
 type SessionUser = { id: string; username: string; [key: string]: unknown };

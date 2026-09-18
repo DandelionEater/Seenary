@@ -1,9 +1,9 @@
 require('../env');
-const { connectStaging, reportError } = require('../atlas/connection');
+const { connectRuntime, reportError } = require('../atlas/connection');
 const { setupAnalytics, createAnalyticsService } = require('../atlas/analytics');
 async function main() {
   const command = process.argv[2]; if (!['setup', 'finalize', 'report'].includes(command) || process.argv.length !== 3) throw new Error('Use setup, finalize, or report.');
-  const connection = await connectStaging();
+  const connection = await connectRuntime();
   try {
     const analyticsRepo = await setupAnalytics(connection.db); const repo = { ...analyticsRepo, users: connection.db.collection('users') };
     if (command === 'setup') { console.log('Atlas analytics schemas and indexes are ready.'); return; }

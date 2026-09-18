@@ -1,6 +1,6 @@
 require('../env');
 const { parseArgs } = require('node:util');
-const { connectStaging, reportError } = require('../atlas/connection');
+const { connectRuntime, reportError } = require('../atlas/connection');
 const { setupMetadata } = require('../atlas/metadata');
 const { createCacheMaintenance } = require('../atlas/cacheMaintenance');
 async function main() {
@@ -8,7 +8,7 @@ async function main() {
     options: { apply: { type: 'boolean' }, limit: { type: 'string' }, 'byte-budget': { type: 'string' } } });
   const limit = values.limit == null ? 100 : Number(values.limit);
   const byteBudget = values['byte-budget'] == null ? Number.POSITIVE_INFINITY : Number(values['byte-budget']);
-  const connection = await connectStaging();
+  const connection = await connectRuntime();
   try {
     const report = await createCacheMaintenance({ queries: await setupMetadata(connection.db) })
       .run({ dryRun: !values.apply, limit, byteBudget });

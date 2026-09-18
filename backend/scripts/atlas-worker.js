@@ -2,7 +2,7 @@ require('../env');
 const { parseArgs } = require('node:util');
 const anilist = require('../anilist');
 const mal = require('../mal');
-const { connectStaging, reportError } = require('../atlas/connection');
+const { connectRuntime, reportError } = require('../atlas/connection');
 const { setupLibrary } = require('../atlas/librarySchema');
 const { setupProviders } = require('../atlas/providerSchema');
 const { setupMedia, createMediaService } = require('../atlas/media');
@@ -23,7 +23,7 @@ async function main() {
   const interval = values.interval == null ? 5000 : Number(values.interval);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('Limit must be from 1 to 100.');
   if (!Number.isSafeInteger(interval) || interval < 1000 || interval > 60000) throw new Error('Interval must be from 1000 to 60000 milliseconds.');
-  const connection = await connectStaging();
+  const connection = await connectRuntime();
   let stopping = false;
   const stop = () => { stopping = true; };
   process.once('SIGINT', stop); process.once('SIGTERM', stop);

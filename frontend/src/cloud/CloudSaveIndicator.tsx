@@ -5,7 +5,7 @@ export default function CloudSaveIndicator() {
   const [label, setLabel] = useState('Cloud saves · Atlas staging');
   useEffect(() => {
     let stopped = false;
-    const endpoint = `http://${location.hostname}:3001`;
+    const endpoint = import.meta.env.VITE_API_BASE_URL || `http://${location.hostname}:3001`;
     const key = `seenary-atlas-renderer-session:${endpoint}`;
     const storage = browserStorage(endpoint);
     const update = async () => {

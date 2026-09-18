@@ -21,6 +21,12 @@ async function connectAtlas(env = process.env, expectedDatabase = null) {
 
 const connectStaging = env => connectAtlas(env, 'seenary_staging');
 const connectProduction = env => connectAtlas(env, 'seenary');
+function connectRuntime(env = process.env) {
+  const mode = String(env.ATLAS_RUNTIME_MODE || 'staging').trim();
+  if (mode === 'production') return connectProduction(env);
+  if (mode === 'staging') return connectStaging(env);
+  throw new Error('ATLAS_RUNTIME_MODE must be staging or production.');
+}
 
 function reportError(error) {
   // Do not print driver messages, URIs, imported rows, or credentials.
@@ -28,4 +34,4 @@ function reportError(error) {
   console.error(`Atlas operation failed${code}. Check configuration, permissions, network access, and input. No credentials were logged.`);
 }
 
-module.exports = { connectAtlas, connectStaging, connectProduction, reportError };
+module.exports = { connectAtlas, connectStaging, connectProduction, connectRuntime, reportError };

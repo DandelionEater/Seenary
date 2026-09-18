@@ -2,7 +2,7 @@ require('../env');
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseArgs } = require('node:util');
-const { connectStaging, reportError } = require('../atlas/connection');
+const { connectStaging, connectProduction, reportError } = require('../atlas/connection');
 const { createBackup, restoreBackup, BACKUP_COLLECTIONS } = require('../atlas/backup');
 const { validateDeployment, healthReport } = require('../atlas/operations');
 async function main() {
@@ -11,7 +11,7 @@ async function main() {
   const command = positionals[0]; if (positionals.length !== 1 || !['validate', 'health', 'backup', 'restore-rehearsal'].includes(command)) throw new Error('Use validate, health, backup --output PATH, or restore-rehearsal --input PATH.');
   if (command === 'validate') { const result = validateDeployment(process.env, values.mode || 'staging'); console.log(JSON.stringify(result, null, 2)); if (!result.ok) process.exitCode = 1; return; }
   if (command === 'backup' && !values.output || command === 'restore-rehearsal' && !values.input) throw new Error('Provide the required backup path.');
-  const connection = await connectStaging();
+  const connection = values.mode === 'production' ? await connectProduction() : await connectStaging();
   try {
     if (command === 'health') { console.log(JSON.stringify(await healthReport(connection.db), null, 2)); return; }
     if (command === 'backup') {

@@ -4,7 +4,7 @@ import type { Entry, Fields, Reply, State } from './libraryClient.ts';
 import { accountLock, browserStorage } from './browserStorage.ts';
 import './cloud.css';
 
-const endpoint = `http://${location.hostname}:3001`;
+const endpoint = import.meta.env.VITE_API_BASE_URL || `http://${location.hostname}:3001`;
 const storage = browserStorage(endpoint);
 const identityKey = `seenary-cloud-user:${endpoint}`;
 let lastRequest = 0;

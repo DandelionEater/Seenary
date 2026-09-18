@@ -24,6 +24,7 @@
     "atlas:operations": "node scripts/atlas-operations.js",
     "test:atlas-operations": "node scripts/atlas-operations-smoke.js",
     "atlas:cutover": "node scripts/atlas-cutover.js",
+    "cutover:sqlite-snapshot": "node scripts/sqlite-cutover-snapshot.js",
     "atlas:cutover-diff": "node scripts/atlas-cutover-diff.js",
     "test:atlas-cutover": "node scripts/atlas-cutover-smoke.js",
     "test:atlas-production-http": "node scripts/atlas-production-http-smoke.js",

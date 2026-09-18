@@ -1,6 +1,6 @@
 require('../env');
 const { parseArgs } = require('node:util');
-const { connectStaging, reportError } = require('../atlas/connection');
+const { connectRuntime, reportError } = require('../atlas/connection');
 const { collections } = require('../atlas/accounts');
 const { readSqliteAccounts, convertAccount, accountFields } = require('../atlas/importAccounts');
 const { readProviderData } = require('../atlas/importProviders');
@@ -23,7 +23,7 @@ async function main() {
   const { values, positionals } = parseArgs({ args: process.argv.slice(2), allowPositionals: true, strict: true,
     options: { sqlite: { type: 'string' }, source: { type: 'string' } } });
   if (positionals.length !== 1 || positionals[0] !== 'diff' || !values.sqlite || !values.source) throw new Error('Use diff --sqlite PATH --source NAME.');
-  const connection = await connectStaging();
+  const connection = await connectRuntime();
   try {
     const accountRepo = collections(connection.db); const accounts = [];
     for (const row of readSqliteAccounts(values.sqlite)) {

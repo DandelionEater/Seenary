@@ -38,3 +38,12 @@ Updated: 2026-09-18 after Batch 10 checkpoint 3.
 10. Enable client-gate `enforce` only after compatible-client adoption is confirmed. Retain the SQLite snapshot, previous deployment, and both backup keys through the recovery window.
 
 Rollback before any post-cutover Atlas-only writes: switch Hostinger back to `npm start` and restore the previous deployment. Rollback after Atlas-only writes requires exporting/replaying those writes first; never switch SQLite back to authority silently.
+
+## Prepared after the recovery commit
+
+- `LEGACY_WRITE_FREEZE=true` makes the legacy API reject every RPC and OAuth callback with HTTP 503 while `/health` reports `writeFrozen: true`.
+- `npm run cutover:sqlite-snapshot -- --output <private-path>` refuses to run without that freeze, uses SQLite's online backup API, runs `quick_check`, and prints the final SHA-256.
+- `ATLAS_RUNTIME_MODE=production` makes cutover, diff, worker, analytics, and cache-maintenance tools target only database `seenary`; staging remains the default.
+- `npm run start:atlas` starts the production Atlas API and its worker/maintenance child. Health becomes unhealthy if that child exits.
+- The production frontend must be built with `VITE_ATLAS_PRODUCTION=true` and `VITE_API_BASE_URL=https://api.seenary.app`. The tested bundle contains the Atlas renderer and cloud-save components.
+- Atlas backup, health, and restore-rehearsal commands targeting production must include `--mode production`.

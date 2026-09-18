@@ -34,9 +34,9 @@ async function main() {
       ANILIST_CLIENT_ID: 'id', ANILIST_CLIENT_SECRET: 'secret', MAL_CLIENT_ID: 'id', MAL_CLIENT_SECRET: 'secret' };
     assert.equal(validateDeployment(baseEnv, 'staging').ok, true);
     assert.equal(validateDeployment({ ...baseEnv, TOKEN_ENCRYPTION_KEY: baseEnv.ATLAS_BACKUP_ENCRYPTION_KEY }, 'staging').ok, false);
-    assert.equal(validateDeployment({ ...baseEnv, MONGODB_DATABASE: 'seenary', API_PUBLIC_ORIGIN: 'https://api.seenary.app',
+    assert.equal(validateDeployment({ ...baseEnv, MONGODB_DATABASE: 'seenary', ATLAS_RUNTIME_MODE: 'production', API_PUBLIC_ORIGIN: 'https://api.seenary.app',
       ANILIST_REDIRECT_URI: 'https://api.seenary.app/auth/anilist/callback', MAL_REDIRECT_URI: 'https://api.seenary.app/auth/mal/callback', WEB_ORIGINS: 'https://seenary.app' }, 'production').ok, true);
-    assert.equal(validateDeployment({ ...baseEnv, MONGODB_DATABASE: 'seenary', API_PUBLIC_ORIGIN: 'http://api.seenary.app' }, 'production').ok, false);
+    assert.equal(validateDeployment({ ...baseEnv, MONGODB_DATABASE: 'seenary', ATLAS_RUNTIME_MODE: 'production', API_PUBLIC_ORIGIN: 'http://api.seenary.app' }, 'production').ok, false);
     console.log('PASS: encrypted complete backup, wrong-key rejection, prefix-only isolated restore, checksum/count verification, safe health metrics, storage thresholds, and staging/production deployment preflight.');
   } finally {
     if (oldTotal === undefined) delete process.env.ATLAS_TOTAL_STORAGE_BYTE_BUDGET; else process.env.ATLAS_TOTAL_STORAGE_BYTE_BUDGET = oldTotal;

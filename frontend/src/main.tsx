@@ -11,7 +11,10 @@ const isDesktopRuntime = Boolean(
   window.desktopWindow
 )
 
-if (import.meta.env.VITE_ATLAS_STAGING === 'true' && ['localhost', '127.0.0.1'].includes(location.hostname)) {
+const useAtlas = import.meta.env.VITE_ATLAS_PRODUCTION === 'true'
+  || import.meta.env.VITE_ATLAS_STAGING === 'true' && ['localhost', '127.0.0.1'].includes(location.hostname)
+
+if (useAtlas) {
   if (new URLSearchParams(location.search).has('atlasReview')) {
     void import('./cloud/CloudLibrary.tsx').then(({ default: CloudLibrary }) => {
       ReactDOM.createRoot(document.getElementById('root')!).render(<><a href="/">Back to Seenary</a><CloudLibrary /></>)

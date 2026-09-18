@@ -2,7 +2,7 @@ require('../env');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { parseArgs } = require('node:util');
-const { connectStaging, reportError } = require('../atlas/connection');
+const { connectRuntime, reportError } = require('../atlas/connection');
 const { collections } = require('../atlas/accounts');
 const { readSqliteAccounts, importAccounts } = require('../atlas/importAccounts');
 const { providerCollections } = require('../atlas/providerSchema');
@@ -27,7 +27,7 @@ async function main() {
   const data = { accounts: readSqliteAccounts(values.sqlite), providers: readProviderData(values.sqlite),
     media: readMediaData(values.sqlite), library: readLibraryData(values.sqlite) };
   if (hashFile(values.sqlite) !== before) throw new Error('SQLite source changed while it was being read.');
-  const connection = await connectStaging();
+  const connection = await connectRuntime();
   try {
     const verify = positionals[0] === 'reconcile'; const stage = positionals[0] === 'stage';
     const reports = {};

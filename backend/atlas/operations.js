@@ -12,6 +12,7 @@ function validateDeployment(env = process.env, mode = 'staging') {
   if (String(env.ANALYTICS_HMAC_SECRET || '').trim().length < 32) errors.push('invalid:ANALYTICS_HMAC_SECRET');
   if (mode === 'staging' && env.MONGODB_DATABASE !== 'seenary_staging') errors.push('database:not-staging');
   if (mode === 'production') {
+    if (env.ATLAS_RUNTIME_MODE !== 'production') errors.push('runtime:not-production');
     if (env.MONGODB_DATABASE !== 'seenary') errors.push('database:not-production');
     let apiOrigin = null;
     try { const url = new URL(env.API_PUBLIC_ORIGIN); if (url.protocol !== 'https:' || url.pathname !== '/' || url.search || url.hash) errors.push('https:API_PUBLIC_ORIGIN'); else apiOrigin = url.origin; }

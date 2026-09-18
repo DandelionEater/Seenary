@@ -93,6 +93,7 @@ const AUTH_RATE_LIMIT_WINDOW_MS = Number(
 );
 const AUTH_RATE_LIMIT_MAX = Number(process.env.AUTH_RATE_LIMIT_MAX || 20);
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
+const LEGACY_WRITE_FREEZE = process.env.LEGACY_WRITE_FREEZE === 'true';
 const DEFAULT_WEB_ORIGIN = 'https://web.seenary.app';
 const ALLOWED_ORIGINS = new Set(
   (process.env.WEB_ORIGINS || process.env.WEB_ORIGIN || DEFAULT_WEB_ORIGIN)
@@ -3061,8 +3062,15 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     sendJson(req, res, 200, {
       ok: true,
+      writeFrozen: LEGACY_WRITE_FREEZE,
       ...(process.env.SHOW_DB_PATH === 'true' ? { dbPath } : {}),
     });
+    return;
+  }
+
+  if (LEGACY_WRITE_FREEZE && (req.method === 'POST' && req.url === '/rpc'
+      || req.method === 'GET' && /^\/auth\/(anilist|mal)\/callback(?:\?|$)/.test(req.url))) {
+    sendJson(req, res, 503, { ok: false, code: 'MIGRATION_MAINTENANCE', message: 'Seenary is briefly read-only for a database migration.' });
     return;
   }
 
