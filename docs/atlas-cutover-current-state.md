@@ -23,12 +23,12 @@ The production Atlas backend is live at `https://api.seenary.app`. Commit `de223
 
 ## Remaining cutover work
 
-1. Deploy the frontend domain switch that makes `seenary.app`, `www.seenary.app`, and `web.seenary.app` use the Atlas renderer automatically. Hostinger's static frontend does not expose environment variables; the API client already defaults to `https://api.seenary.app` on hosted domains.
-2. Verify the deployed frontend uses the Atlas renderer/API path.
-3. Run a small live cohort check: login, library read, one reversible library write, provider status/refresh, and analytics consent behavior.
-4. Inspect API health and worker queues after that write.
-5. Keep the client gate in `observe` through the recovery window. Enable `enforce` only after compatible-client adoption is confirmed.
-6. Retain the frozen SQLite snapshot, previous deployment, encrypted backups, and recovery keys until the recovery window closes.
+The frontend domain switch from commit `aca22ef` is deployed. `web.seenary.app` serves the matching production bundle, the API preflight accepts that origin with credentials, and a live read-only `getSession` request returned HTTP 200 with the expected unauthenticated result.
+
+1. Run a small live cohort check: login, library read, one reversible library write, provider status/refresh, and analytics consent behavior.
+2. Inspect API health and worker queues after that write.
+3. Keep the client gate in `observe` through the recovery window. Enable `enforce` only after compatible-client adoption is confirmed.
+4. Retain the frozen SQLite snapshot, previous deployment, encrypted backups, and recovery keys until the recovery window closes.
 
 Rollback before any post-cutover Atlas-only writes: set Hostinger's backend entry file back to `server.js` and redeploy; legacy SQLite will remain read-only. Rollback after Atlas-only writes requires exporting and replaying those writes first. Never restore SQLite as writable authority silently.
 
