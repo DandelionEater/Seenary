@@ -801,6 +801,8 @@ export function SettingsPage({
   });
   const [isSyncing, setIsSyncing] = useState(false);
   const [isPullingFromRemote, setIsPullingFromRemote] = useState(false);
+  const [autoSyncPending, setAutoSyncPending] = useState<boolean | null>(null);
+  const autoSyncRequestRef = useRef(false);
   const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(null);
   const [isSyncActivityOpen, setIsSyncActivityOpen] = useState(false);
   const [syncActivityTab, setSyncActivityTab] = useState<SyncActivityTab>("pending");
@@ -1680,6 +1682,9 @@ export function SettingsPage({
   }
 
   async function updateAutoSync(enabled: boolean) {
+    if (autoSyncRequestRef.current) return;
+    autoSyncRequestRef.current = true;
+    setAutoSyncPending(enabled);
     try {
       const result = await window.api.setAutoSync(enabled);
 
@@ -1706,6 +1711,9 @@ export function SettingsPage({
         ...current,
         feedback: { kind: "error", message: "Failed to update sync setting." },
       }));
+    } finally {
+      autoSyncRequestRef.current = false;
+      setAutoSyncPending(null);
     }
   }
 
@@ -4104,8 +4112,10 @@ export function SettingsPage({
                       ? "Push queued local changes after a short delay."
                       : "Link AniList or MyAnimeList before automatic sync can run."
                   }
-                  checked={syncStatus.autoSyncEnabled}
-                  disabled={!syncStatus.linked || syncStatus.loading}
+                  checked={autoSyncPending ?? syncStatus.autoSyncEnabled}
+                  disabled={!syncStatus.linked || syncStatus.loading || autoSyncPending !== null}
+                  pending={autoSyncPending !== null}
+                  pendingLabel={autoSyncPending ? "Enabling..." : "Disabling..."}
                   onChange={updateAutoSync}
                   centerIcon
                 />
@@ -5473,6 +5483,8 @@ function ToggleSetting({
   disabled = false,
   onChange,
   centerIcon = false,
+  pending = false,
+  pendingLabel = "Saving...",
 }: {
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   title: string;
@@ -5481,14 +5493,19 @@ function ToggleSetting({
   disabled?: boolean;
   onChange: (checked: boolean) => void | Promise<void>;
   centerIcon?: boolean;
+  pending?: boolean;
+  pendingLabel?: string;
 }) {
   return (
     <button
       type="button"
       disabled={disabled}
+      aria-busy={pending}
       onClick={() => onChange(!checked)}
       className={`flex w-full items-center justify-between gap-4 rounded-3xl border p-5 text-left transition focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]/55 ${
-        disabled
+        pending
+          ? "cursor-progress border-[var(--app-accent)]/25 bg-[var(--app-accent-soft)]"
+          : disabled
           ? "cursor-not-allowed border-white/5 bg-white/[0.02] opacity-45"
           : checked
           ? "border-[var(--app-accent)]/35 bg-[var(--app-accent-soft)] hover:bg-[var(--app-accent-soft)]"
@@ -5509,19 +5526,27 @@ function ToggleSetting({
         </div>
       </div>
 
-      <span
-        className={`relative h-7 w-12 shrink-0 rounded-full border transition ${
+      <div className="flex shrink-0 items-center gap-3">
+        {pending && (
+          <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/55" aria-live="polite">
+            <ArrowPathIcon className="h-4 w-4 animate-spin text-[var(--app-accent)]" />
+            {pendingLabel}
+          </span>
+        )}
+        <span
+          className={`relative h-7 w-12 shrink-0 rounded-full border transition ${
           checked
             ? "border-[var(--app-accent)] bg-[var(--app-accent-soft)]"
             : "border-white/10 bg-white/8"
-        }`}
-      >
-        <span
-          className={`absolute top-1 h-5 w-5 rounded-full transition ${
-            checked ? "left-6 bg-[var(--app-accent)]" : "left-1 bg-white/45"
           }`}
-        />
-      </span>
+        >
+          <span
+            className={`absolute top-1 h-5 w-5 rounded-full transition ${
+              checked ? "left-6 bg-[var(--app-accent)]" : "left-1 bg-white/45"
+            }`}
+          />
+        </span>
+      </div>
     </button>
   );
 }
