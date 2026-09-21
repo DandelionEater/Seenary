@@ -5,7 +5,6 @@ import {
   ArrowUpTrayIcon,
   ArrowsRightLeftIcon,
   BookmarkIcon,
-  BoltIcon,
   BugAntIcon,
   ChartBarSquareIcon,
   CheckIcon,
@@ -4109,7 +4108,7 @@ export function SettingsPage({
 
               <div className="space-y-3">
                 <ToggleSetting
-                  icon={BoltIcon}
+                  icon={ArrowPathIcon}
                   title="Automatic sync"
                   description={
                     syncStatus.linked
