@@ -57,6 +57,13 @@ async function main() {
     const login = await authorize('anilist', 'login', null, 101);
     assert.equal(login.user.id, alice.user.id, 'provider login returns mapped owner');
     assert.equal((await accounts.getSession(login.token)).authenticated, true);
+    const externalStart = await providers.begin('anilist', 'login', null, binding, null, 'poll');
+    const externalState = new URL(externalStart.authorizationUrl).searchParams.get('state');
+    assert.equal((await providers.complete('anilist', externalState, '404', null)).delivered, true, 'external callback needs no browser cookie');
+    const externalResult = await providers.poll('anilist', externalStart.pollToken);
+    assert.equal(externalResult.needsUsername, true, 'desktop polling receives the provider result');
+    assert.equal((await providers.poll('anilist', externalStart.pollToken)).ok, false, 'desktop result is one-use');
+    assert.equal((await providers.completeSignup('anilist', externalResult.signupToken, 'ExternalOnly', binding)).ok, true);
     const expired = await providers.begin('mal', 'link', bob.token, binding);
     const expiredState = new URL(expired.authorizationUrl).searchParams.get('state');
     await repo.oauthFlows.updateOne({ _id: tokenHash(expiredState) }, { $set: { expiresAt: new Date(0) } });

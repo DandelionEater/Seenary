@@ -48,29 +48,42 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
       const user = await accounts.getAuthenticatedUser(token);
       return user ? { ok: true, export: await exportAccountData(repo, user) } : fail('You must be logged in.');
     },
-    async begin(provider, mode, token, binding, username) {
+    async begin(provider, mode, token, binding, username, delivery = 'popup') {
       if (!validProvider(provider) || !['login', 'link'].includes(mode) || !/^[a-f0-9]{64}$/.test(binding || '')) return fail('Invalid authorization request.');
+      if (!['popup', 'poll'].includes(delivery)) return fail('Invalid authorization delivery mode.');
       const user = mode === 'link' ? await accounts.getAuthenticatedUser(token) : null;
       if (mode === 'link' && !user) return fail('You must be logged in.');
       if (username != null && (typeof username !== 'string' || !/^[a-zA-Z0-9_]{3,20}$/.test(username.trim()))) return fail('Invalid Seenary username.');
       const state = crypto.randomBytes(32).toString('hex');
+      const pollToken = delivery === 'poll' ? crypto.randomBytes(32).toString('hex') : null;
       const verifier = provider === 'mal' ? crypto.randomBytes(48).toString('base64url') : null;
       const authorizationUrl = adapters[provider].authorize(state, verifier);
       await repo.oauthFlows.insertOne({ _id: tokenHash(state), provider, mode, bindingHash: tokenHash(binding),
         userId: user?._id || null, authVersion: user?.authVersion ?? null, sessionHash: user ? tokenHash(token) : null,
-        username: username?.trim() || null, verifier: cipher.encrypt(verifier), expiresAt: new Date(Date.now() + 10 * 60000) });
-      return { ok: true, authorizationUrl };
+        username: username?.trim() || null, verifier: cipher.encrypt(verifier), pollHash: pollToken ? tokenHash(pollToken) : null,
+        expiresAt: new Date(Date.now() + 10 * 60000) });
+      return { ok: true, authorizationUrl, ...(pollToken ? { pollToken } : {}) };
     },
     async complete(provider, state, code, binding) {
-      if (!validProvider(provider) || !/^[a-f0-9]{64}$/.test(state || '') || !/^[a-f0-9]{64}$/.test(binding || '')
-          || typeof code !== 'string' || !code || code.length > 4096) return fail('Invalid or expired authorization.');
-      const flow = await repo.oauthFlows.findOneAndDelete({ _id: tokenHash(state), provider, bindingHash: tokenHash(binding), expiresAt: { $gt: new Date() } });
+      if (!validProvider(provider) || !/^[a-f0-9]{64}$/.test(state || '')) return fail('Invalid or expired authorization.');
+      const flowQuery = { _id: tokenHash(state), provider, expiresAt: { $gt: new Date() } };
+      const candidate = await repo.oauthFlows.findOne(flowQuery);
+      if (!candidate || !candidate.pollHash && (!/^[a-f0-9]{64}$/.test(binding || '') || candidate.bindingHash !== tokenHash(binding))) return fail('Invalid or expired authorization.');
+      const flow = await repo.oauthFlows.findOneAndDelete(flowQuery);
       if (!flow) return fail('Invalid or expired authorization.');
+      const deliver = async (result) => {
+        if (!flow.pollHash) return result;
+        await repo.oauthFlows.insertOne({ _id: flow.pollHash, provider, mode: 'completion', bindingHash: flow.bindingHash,
+          completion: cipher.encrypt(JSON.stringify(result)), expiresAt: new Date(Date.now() + 10 * 60000) });
+        return { ok: true, delivered: true };
+      };
+      if (typeof code !== 'string' || !code || code.length > 4096) return deliver(fail('Authorization was denied or cancelled.'));
+      try {
       // Network requests happen outside transactions; identity comes only from the provider.
       const tokens = await adapters[provider].exchange(code, cipher.decrypt(flow.verifier));
       const fields = tokenFields(tokens, cipher);
       const viewer = await adapters[provider].viewer(tokens.access_token);
-      if (!Number.isSafeInteger(viewer?.id) || viewer.id <= 0 || typeof viewer.name !== 'string' || !viewer.name || viewer.name.length > 100) return fail('Provider returned invalid identity.');
+      if (!Number.isSafeInteger(viewer?.id) || viewer.id <= 0 || typeof viewer.name !== 'string' || !viewer.name || viewer.name.length > 100) return deliver(fail('Provider returned invalid identity.'));
       if (flow.mode === 'login' && !flow.username) {
         const owner = await repo.providerAccounts.findOne({ provider, providerUserId: String(viewer.id) });
         if (!owner) {
@@ -79,8 +92,8 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
             providerUserId: String(viewer.id), providerUsername: viewer.name, accessToken: fields.accessToken,
             refreshToken: fields.refreshToken, providerExpiresAt: fields.expiresAt,
             expiresAt: new Date(Date.now() + 10 * 60000) });
-          return { ok: false, needsUsername: true, signupToken, providerUsername: viewer.name,
-            message: `Connected to ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'}. Choose your Seenary username.` };
+          return deliver({ ok: false, needsUsername: true, signupToken, providerUsername: viewer.name,
+            message: `Connected to ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'}. Choose your Seenary username.` });
         }
       }
       const passwordHash = flow.mode === 'login' && flow.username
@@ -116,12 +129,23 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
           return { ok: true, user, account: publicLink(link) };
         });
       } catch (error) {
-        if (error.code === 11000) return fail('Username or provider account is already in use.');
+        if (error.code === 11000) return deliver(fail('Username or provider account is already in use.'));
         throw error;
       }
-      if (!result.ok) return result;
-      return { ok: true, user: safeUser(result.user), account: result.account,
-        ...(flow.mode === 'login' ? { token: await accounts.issueSession(result.user) } : {}) };
+      if (!result.ok) return deliver(result);
+      return deliver({ ok: true, user: safeUser(result.user), account: result.account,
+        ...(flow.mode === 'login' ? { token: await accounts.issueSession(result.user) } : {}) });
+      } catch {
+        return deliver(fail('Provider authorization failed. Restart the authorization flow.'));
+      }
+    },
+    async poll(provider, pollToken) {
+      if (!validProvider(provider) || !/^[a-f0-9]{64}$/.test(pollToken || '')) return fail('Invalid authorization status request.');
+      const id = tokenHash(pollToken);
+      const completion = await repo.oauthFlows.findOneAndDelete({ _id: id, provider, mode: 'completion', expiresAt: { $gt: new Date() } });
+      if (completion) return JSON.parse(cipher.decrypt(completion.completion));
+      const pending = await repo.oauthFlows.findOne({ provider, pollHash: id, expiresAt: { $gt: new Date() } });
+      return pending ? { ok: true, pending: true } : fail('Authorization expired or was cancelled.');
     },
     async completeSignup(provider, signupToken, username, binding) {
       if (!validProvider(provider) || !/^[a-f0-9]{64}$/.test(signupToken || '') || !/^[a-f0-9]{64}$/.test(binding || '')

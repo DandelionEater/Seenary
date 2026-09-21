@@ -1,6 +1,6 @@
 require('./env');
 
-const { app, ipcMain } = require('electron');
+const { app, ipcMain, shell } = require('electron');
 const path = require('path');
 
 app.setAppUserModelId('app.seenary.desktop');
@@ -9,6 +9,14 @@ app.setName('Seenary');
 // Released desktop builds bundle the Atlas renderer. Keep the native/legacy
 // bridge available under a separate name so the renderer can own window.api.
 if (app.isPackaged) process.env.SEENARY_ATLAS_RENDERER = '1';
+
+ipcMain.handle('external:open', async (_event, value) => {
+  const url = new URL(String(value));
+  const localHttp = url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname);
+  if (url.protocol !== 'https:' && !localHttp) throw new Error('Unsupported external URL.');
+  await shell.openExternal(url.toString());
+  return { ok: true };
+});
 
 if (!app.isPackaged) {
   app.setPath('userData', path.join(__dirname, '.electron-user-data'));

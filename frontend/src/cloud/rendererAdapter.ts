@@ -12,6 +12,9 @@ const sessionKey = `seenary-atlas-renderer-session:${endpoint}`;
 type SessionUser = { id: string; username: string; [key: string]: unknown };
 type AccountReply = Omit<Reply, 'user'> & {
   user?: SessionUser;
+  authorizationUrl?: string;
+  pollToken?: string;
+  pending?: boolean;
   account?: { provider: 'anilist' | 'mal'; providerUserId: string; username: string; updatedAt: string; lastImportAt?: string | null; needsReauthorization?: boolean } | null;
   settings?: { autoSyncEnabled: boolean; analyticsConsentDecided?: boolean; analyticsEnabled?: boolean };
   requestedAt?: string;
@@ -55,6 +58,22 @@ export function installAtlasRenderer(legacy: Api) {
     return result;
   }
   async function providerAuthorization(provider: 'anilist' | 'mal', mode: 'login' | 'link'): Promise<ProviderLoginResult> {
+    if (window.desktopExternal) {
+      const started = await rpc(mode === 'link' ? 'beginProviderLink' : 'beginProviderLogin', [provider, undefined, 'poll'], user?.id);
+      if (!started.ok || !started.authorizationUrl || !started.pollToken) {
+        return { ok: false, message: started.message || 'Unable to start provider authorization.' };
+      }
+      await window.desktopExternal.open(started.authorizationUrl);
+      const deadline = Date.now() + 10 * 60000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 750));
+        const result = await rpc('pollProviderAuthorization', [provider, started.pollToken], user?.id) as ProviderLoginResult & { pending?: boolean };
+        if (result.pending) continue;
+        if (result.ok && result.user) result.user = await activate(result.user as SessionUser) as RendererSessionUser;
+        return result;
+      }
+      return { ok: false, message: 'Authorization timed out. Start again when you are ready.' };
+    }
     const url = new URL(`${endpoint}/auth/${provider}/start`);
     url.searchParams.set('mode', mode);
     const popup = window.open(url.toString(), `seenary-${provider}-${mode}`, 'width=560,height=720,popup=yes');

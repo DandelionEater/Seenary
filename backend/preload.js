@@ -12,6 +12,10 @@ contextBridge.exposeInMainWorld('desktopEnvironment', {
   getInfo: () => ipcRenderer.invoke('desktop-environment:get'),
 });
 
+contextBridge.exposeInMainWorld('desktopExternal', {
+  open: (url) => ipcRenderer.invoke('external:open', url),
+});
+
 const legacyApi = {
   searchMedia: (query, hideAdultContent = true) =>
     ipcRenderer.invoke('anilist:search-media', { query, hideAdultContent }),

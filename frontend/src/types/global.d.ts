@@ -139,6 +139,9 @@ declare global {
 
   interface Window {
     legacyApi?: Window['api'];
+    desktopExternal?: {
+      open: (url: string) => Promise<{ ok: boolean }>;
+    };
     api: {
       searchMedia: (
         query: string,

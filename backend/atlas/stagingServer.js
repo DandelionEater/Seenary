@@ -221,8 +221,13 @@ function createStagingServer(service, providers = null, media = null, library = 
         case 'beginProviderLink': {
           if (!providers) { send(404, { ok: false }); return; }
           const browserBinding = /^[a-f0-9]{64}$/.test(binding || '') ? binding : crypto.randomBytes(32).toString('hex');
-          result = await providers.begin(body.args[0], body.method === 'beginProviderLink' ? 'link' : 'login', token, browserBinding, body.args[1]);
+          result = await providers.begin(body.args[0], body.method === 'beginProviderLink' ? 'link' : 'login', token, browserBinding, body.args[1], body.args[2]);
           if (result.ok) res.setHeader('Set-Cookie', cookie('seenary_oauth_binding', browserBinding, config.secureCookies, 'Lax', 600));
+          break;
+        }
+        case 'pollProviderAuthorization': {
+          if (!providers) { send(404, { ok: false }); return; }
+          result = await providers.poll(body.args[0], body.args[1]);
           break;
         }
         case 'completeProviderSignup': {
