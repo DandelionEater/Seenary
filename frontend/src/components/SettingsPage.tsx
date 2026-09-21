@@ -4060,7 +4060,7 @@ export function SettingsPage({
                 }
               />
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="space-y-3">
                 <ToggleSetting
                   icon={ArrowPathIcon}
                   title="Automatic sync"
@@ -4072,20 +4072,26 @@ export function SettingsPage({
                   checked={syncStatus.autoSyncEnabled}
                   disabled={!syncStatus.linked || syncStatus.loading}
                   onChange={updateAutoSync}
-                  className="md:min-h-60"
                 />
 
-                <div className="flex flex-col justify-center rounded-3xl border border-white/10 bg-white/[0.03] p-5 md:min-h-60">
-                  <p className="font-semibold text-white">Manual sync</p>
-                  <p className="mt-2 text-sm leading-6 text-white/45">
-                    {syncStatus.pendingCount > 0
-                      ? `${syncStatus.pendingCount} queued change${syncStatus.pendingCount === 1 ? "" : "s"} waiting to sync or retry.`
-                      : syncStatus.linked
-                        ? `No queued ${manualSyncTargetsLabel} changes right now.`
-                        : "Sync is unavailable because no external account is linked."}
-                  </p>
+                <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="shrink-0 rounded-2xl border border-white/10 bg-white/5 p-2 text-white/65">
+                      <ArrowPathIcon className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-white">Manual sync</p>
+                      <p className="mt-1 text-sm leading-6 text-white/45">
+                        {syncStatus.pendingCount > 0
+                          ? `${syncStatus.pendingCount} queued change${syncStatus.pendingCount === 1 ? "" : "s"} waiting to sync or retry.`
+                          : syncStatus.linked
+                            ? `No queued ${manualSyncTargetsLabel} changes right now.`
+                            : "Sync is unavailable because no external account is linked."}
+                      </p>
+                    </div>
+                  </div>
 
-                  <div className="mt-5 flex flex-wrap gap-3">
+                  <div className="flex shrink-0 flex-wrap items-center gap-3 sm:justify-end">
                     <ProgressActionButton
                       onClick={runSyncNow}
                       disabled={!syncStatus.linked || isSyncing}
@@ -4103,39 +4109,46 @@ export function SettingsPage({
                       View activity
                     </button>
                   </div>
-                  <div className="mt-3 min-h-10" aria-hidden="true" />
                 </div>
 
-                <div className="flex flex-col justify-center rounded-3xl border border-white/10 bg-white/[0.03] p-5 md:min-h-60">
-                  <p className="font-semibold text-white">Update from {syncTargetLabel}</p>
-                  <p className="mt-2 text-sm leading-6 text-white/45">
-                    {!syncStatus.linked
-                      ? "Link an external account before pulling remote list updates."
-                      : isAniListSync
-                      ? "Pull your Anime and Manga library from AniList and replace local list fields that differ."
-                      : "Pull your Anime and Manga library from MyAnimeList and replace local list fields that differ."}
-                  </p>
+                <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="shrink-0 rounded-2xl border border-white/10 bg-white/5 p-2 text-white/65">
+                      <ArrowPathIcon className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-white">Update from {syncTargetLabel}</p>
+                      <p className="mt-1 text-sm leading-6 text-white/45">
+                        {!syncStatus.linked
+                          ? "Link an external account before pulling remote list updates."
+                          : isAniListSync
+                          ? "Pull your Anime and Manga library from AniList and replace local list fields that differ."
+                          : "Pull your Anime and Manga library from MyAnimeList and replace local list fields that differ."}
+                      </p>
+                    </div>
+                  </div>
 
-                  <ProgressActionButton
-                    onClick={pullFromRemote}
-                    disabled={!syncStatus.linked || isPullingFromRemote}
-                    active={isPullingFromRemote}
-                    progress={
-                      syncProgress?.operation === (isAniListSync ? "pull-anilist" : "pull-mal")
-                        ? syncProgress
-                        : null
-                    }
-                    className="mt-5"
-                  >
-                    {isPullingFromRemote ? "Updating..." : `Update from ${syncTargetLabel}`}
-                  </ProgressActionButton>
-                  <p className="mt-3 min-h-10 text-xs leading-5 text-white/50" aria-live="polite">
-                    {isPullingFromRemote && syncProgress?.operation === (isAniListSync ? "pull-anilist" : "pull-mal")
-                      ? <>{syncProgress.label}{Number(syncProgress.total) > 0
-                        ? ` ${Number(syncProgress.current || 0).toLocaleString()} of ${Number(syncProgress.total).toLocaleString()} titles.`
-                        : ""}</>
-                      : null}
-                  </p>
+                  <div className="flex min-w-0 shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+                    <p className="max-w-sm text-xs leading-5 text-white/50 sm:text-right" aria-live="polite">
+                      {syncProgress?.operation === (isAniListSync ? "pull-anilist" : "pull-mal")
+                        ? <>{syncProgress.label}{Number(syncProgress.total) > 0
+                          ? ` ${Number(syncProgress.current || 0).toLocaleString()} of ${Number(syncProgress.total).toLocaleString()} titles.`
+                          : ""}</>
+                        : null}
+                    </p>
+                    <ProgressActionButton
+                      onClick={pullFromRemote}
+                      disabled={!syncStatus.linked || isPullingFromRemote}
+                      active={isPullingFromRemote}
+                      progress={
+                        syncProgress?.operation === (isAniListSync ? "pull-anilist" : "pull-mal")
+                          ? syncProgress
+                          : null
+                      }
+                    >
+                      {isPullingFromRemote ? "Updating..." : `Update from ${syncTargetLabel}`}
+                    </ProgressActionButton>
+                  </div>
                 </div>
               </div>
 
@@ -5422,7 +5435,6 @@ function ToggleSetting({
   checked,
   disabled = false,
   onChange,
-  className = "",
 }: {
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   title: string;
@@ -5430,14 +5442,13 @@ function ToggleSetting({
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void | Promise<void>;
-  className?: string;
 }) {
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`flex w-full items-center justify-between gap-4 rounded-3xl border p-5 text-left transition focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]/55 ${className} ${
+      className={`flex w-full items-center justify-between gap-4 rounded-3xl border p-5 text-left transition focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]/55 ${
         disabled
           ? "cursor-not-allowed border-white/5 bg-white/[0.02] opacity-45"
           : checked
