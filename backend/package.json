@@ -30,7 +30,7 @@
     "test:atlas-production-http": "node scripts/atlas-production-http-smoke.js",
     "atlas:worker": "node scripts/atlas-worker.js",
     "start": "node server.js",
-    "atlas": "node scripts/atlas-accounts.js serve",
+    "atlas": "node scripts/start-atlas-local.js",
     "start:atlas": "node atlas-server.js",
     "atlas:accounts": "node scripts/atlas-accounts.js",
     "atlas:providers": "node scripts/atlas-providers.js",
