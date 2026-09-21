@@ -7,10 +7,12 @@ const packageRoot = path.resolve(__dirname, '..');
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 const isUpdatePreview = process.argv.includes('--preview-update');
+const isAtlasRenderer = process.argv.includes('--atlas');
 if (isUpdatePreview) {
   env.SEENARY_PREVIEW_UPDATE_DIALOG = '1';
   env.SEENARY_USE_BUNDLED_FRONTEND = '1';
 }
+if (isAtlasRenderer) env.SEENARY_ATLAS_RENDERER = '1';
 
 const userDataDir = path.join(
   packageRoot,

@@ -6,6 +6,10 @@ const path = require('path');
 app.setAppUserModelId('app.seenary.desktop');
 app.setName('Seenary');
 
+// Released desktop builds bundle the Atlas renderer. Keep the native/legacy
+// bridge available under a separate name so the renderer can own window.api.
+if (app.isPackaged) process.env.SEENARY_ATLAS_RENDERER = '1';
+
 if (!app.isPackaged) {
   app.setPath('userData', path.join(__dirname, '.electron-user-data'));
   app.setPath('crashDumps', path.join(__dirname, '.electron-crash-dumps'));

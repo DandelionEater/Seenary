@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('desktopEnvironment', {
   getInfo: () => ipcRenderer.invoke('desktop-environment:get'),
 });
 
-contextBridge.exposeInMainWorld('api', {
+const legacyApi = {
   searchMedia: (query, hideAdultContent = true) =>
     ipcRenderer.invoke('anilist:search-media', { query, hideAdultContent }),
   getDiscoverMedia: (hideAdultContent = true) =>
@@ -142,7 +142,12 @@ contextBridge.exposeInMainWorld('api', {
   clearAllMediaLists: (options) => ipcRenderer.invoke('media-list:clear-all', options),
   exportLocalBackup: (preferenceBundle) => ipcRenderer.invoke('backup:export', preferenceBundle),
   importLocalBackup: (backup) => ipcRenderer.invoke('backup:import', backup),
-});
+};
+
+contextBridge.exposeInMainWorld(
+  process.env.SEENARY_ATLAS_RENDERER === '1' ? 'legacyApi' : 'api',
+  legacyApi,
+);
 
 contextBridge.exposeInMainWorld('desktopShortcuts', {
   getHideShowShortcut: () => ipcRenderer.invoke('shortcuts:get-hide-show'),

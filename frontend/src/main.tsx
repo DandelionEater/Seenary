@@ -24,7 +24,7 @@ if (useAtlas) {
   } else {
     installApiClient()
     void Promise.all([import('./cloud/rendererAdapter.ts'), import('./cloud/CloudSaveIndicator.tsx')]).then(([{ installAtlasRenderer }, { default: CloudSaveIndicator }]) => {
-      installAtlasRenderer(window.api)
+      installAtlasRenderer(window.legacyApi ?? window.api)
       ReactDOM.createRoot(document.getElementById('root')!).render(<><App /><CloudSaveIndicator /></>)
     })
   }
