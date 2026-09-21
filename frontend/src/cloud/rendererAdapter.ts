@@ -332,7 +332,8 @@ export function installAtlasRenderer(legacy: Api) {
           const label = provider === 'anilist' ? 'AniList' : 'MyAnimeList';
           notify({ ok: true, provider: label,
             message: `${label} update complete. ${counts?.applied ?? 0} entries were added or updated; ${counts?.skipped ?? 0} were already current.` });
-          progressListeners.forEach(listener => listener({ operation, stage: 'complete', label: `${label} update complete.`, current: counts?.applied ?? 0, total: (counts?.applied ?? 0) + (counts?.skipped ?? 0) }));
+          const total = (counts?.applied ?? 0) + (counts?.skipped ?? 0);
+          progressListeners.forEach(listener => listener({ operation, stage: 'complete', label: `${label} update complete.`, current: total, total }));
           return;
         }
         if (status.sync?.lastOutcome === 'reauthorization-required') {

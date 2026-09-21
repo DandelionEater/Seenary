@@ -1044,6 +1044,24 @@ export function SettingsPage({
       setSyncProgress(progress);
       if (progress.operation === "pull-anilist" || progress.operation === "pull-mal") {
         setIsPullingFromRemote(!["complete", "failed"].includes(progress.stage));
+        if (progress.stage === "complete") {
+          const message = progress.label;
+          setSyncStatus((current) => ({
+            ...current,
+            feedback: { kind: "success", message },
+          }));
+          window.setTimeout(() => {
+            setSyncProgress((current) =>
+              current?.operation === progress.operation && current.stage === "complete" ? null : current
+            );
+            setSyncStatus((current) => ({
+              ...current,
+              feedback: current.feedback?.kind === "success" && current.feedback.message === message
+                ? null
+                : current.feedback,
+            }));
+          }, 6000);
+        }
       }
     });
 

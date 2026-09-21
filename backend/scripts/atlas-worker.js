@@ -48,7 +48,7 @@ async function main() {
       if (values.maintenance && Date.now() - lastMaintenance >= 24 * 3600000) {
         report.maintenance = await maintenance.run({ dryRun: false, limit: 100, byteBudget }); lastMaintenance = Date.now();
       }
-      console.log(JSON.stringify(report));
+      if (!values.watch || outbound.claimed || incoming.claimed || report.maintenance) console.log(JSON.stringify(report));
       if (!values.watch || stopping) break;
       await wait(interval);
     } while (!stopping);
