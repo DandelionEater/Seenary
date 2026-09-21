@@ -509,10 +509,13 @@ export function installAtlasRenderer(legacy: Api) {
   };
   Object.assign(handlers, methods);
   const publicReads = new Set(['searchMedia', 'getDiscoverMedia', 'getDiscoverShelfAnime', 'getStudioMedia', 'getArtistMedia']);
-  window.api = new Proxy(legacy, { get(target, property) {
+  // Electron contextBridge objects are frozen and expose non-configurable
+  // properties. A fresh target lets Atlas override those method names while
+  // still delegating explicitly supported native reads to the legacy bridge.
+  window.api = new Proxy({} as Api, { get(_target, property) {
     const name = String(property);
     if (handlers[name]) return handlers[name];
-    if (publicReads.has(name)) return Reflect.get(target, property);
+    if (publicReads.has(name)) return Reflect.get(legacy, property);
     return async () => { throw new Error(`Unsupported Seenary API method: ${name}`); };
   } });
   const tick = async () => {
