@@ -42,6 +42,7 @@
     "test:atlas-accounts": "node scripts/atlas-accounts-smoke.js",
     "desktop": "node scripts/start-electron.js",
     "desktop:atlas": "node scripts/start-electron.js --atlas",
+    "dev:atlas": "node scripts/dev-atlas.js",
     "desktop:update-preview": "node scripts/start-electron.js --preview-update",
     "rebuild:node": "npm rebuild better-sqlite3 argon2",
     "rebuild:electron": "electron-rebuild -f --only better-sqlite3",

@@ -84,6 +84,12 @@ const child = spawn(electron, args, {
   windowsHide: false,
 });
 
+const stopChild = () => {
+  if (!child.killed) child.kill('SIGTERM');
+};
+process.once('SIGINT', stopChild);
+process.once('SIGTERM', stopChild);
+
 child.stderr.pipe(logStream);
 
 child.on('exit', (code, signal) => {
