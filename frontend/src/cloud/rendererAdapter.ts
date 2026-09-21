@@ -28,6 +28,7 @@ type ImportItem = SaveListEntryPayload & { animeId: number; mangaId?: number; me
 type ImportPreview = { ok: boolean; username?: string; message?: string; preview: { totalFound?: number; groups: { status: string; mediaType?: 'ANIME' | 'MANGA'; items: ImportItem[] }[] } };
 type RendererSessionUser = { id: number; cloudUserId: string; username: string; [key: string]: unknown };
 type ProviderAuthResult = Omit<AccountReply, 'user'> & { user?: SessionUser | RendererSessionUser };
+type ProviderLoginResult = ProviderAuthResult & { needsUsername?: boolean; signupToken?: string; providerUsername?: string };
 
 export function installAtlasRenderer(legacy: Api) {
   let user: SessionUser | null = null;
@@ -53,14 +54,9 @@ export function installAtlasRenderer(legacy: Api) {
     if (!response.ok) throw new Error(result.code || result.message || 'Atlas is unavailable.');
     return result;
   }
-  async function providerAuthorization(provider: 'anilist' | 'mal', mode: 'login' | 'link', username?: string): Promise<ProviderAuthResult> {
-    const trimmed = username?.trim();
-    if (mode === 'login' && (!trimmed || !/^[a-zA-Z0-9_]{3,20}$/.test(trimmed))) {
-      return { ok: false, message: 'Choose a Seenary username with 3–20 letters, numbers, or underscores.' };
-    }
+  async function providerAuthorization(provider: 'anilist' | 'mal', mode: 'login' | 'link'): Promise<ProviderLoginResult> {
     const url = new URL(`${endpoint}/auth/${provider}/start`);
     url.searchParams.set('mode', mode);
-    if (trimmed) url.searchParams.set('username', trimmed);
     const popup = window.open(url.toString(), `seenary-${provider}-${mode}`, 'width=560,height=720,popup=yes');
     if (!popup) return { ok: false, message: 'Allow popups for Seenary, then try again.' };
 
@@ -392,10 +388,18 @@ export function installAtlasRenderer(legacy: Api) {
     },
     login: async (name: string, password: string) => { const reply = await rpc('login', [name, password]); return { ...reply, message: reply.message || reply.code || '', user: reply.user ? await activate(reply.user as SessionUser) : undefined }; },
     register: async (name: string, password: string) => { const reply = await rpc('register', [name, password]); return { ...reply, message: reply.message || reply.code || '', user: reply.user ? await activate(reply.user as SessionUser) : undefined }; },
-    startAniListLogin: (username?: string) => providerAuthorization('anilist', 'login', username),
-    completeAniListLogin: (username: string) => providerAuthorization('anilist', 'login', username),
-    startMalLogin: (username?: string) => providerAuthorization('mal', 'login', username),
-    completeMalLogin: (username: string) => providerAuthorization('mal', 'login', username),
+    startAniListLogin: () => providerAuthorization('anilist', 'login'),
+    completeAniListLogin: async (username: string, signupToken?: string) => {
+      if (!signupToken) return providerAuthorization('anilist', 'login');
+      const reply = await rpc('completeProviderSignup', ['anilist', signupToken, username]);
+      return { ...reply, user: reply.user ? await activate(reply.user as SessionUser) : undefined };
+    },
+    startMalLogin: () => providerAuthorization('mal', 'login'),
+    completeMalLogin: async (username: string, signupToken?: string) => {
+      if (!signupToken) return providerAuthorization('mal', 'login');
+      const reply = await rpc('completeProviderSignup', ['mal', signupToken, username]);
+      return { ...reply, user: reply.user ? await activate(reply.user as SessionUser) : undefined };
+    },
     logout: async () => { const reply = await rpc('logout', [], user?.id); if (reply.ok) await activate(null); return reply; },
     getMyList: () => list('ANIME'), getMyMangaList: () => list('MANGA'),
     getMyListEntry: (id: number) => entry('ANIME', id), getMyMangaListEntry: (id: number) => entry('MANGA', id),

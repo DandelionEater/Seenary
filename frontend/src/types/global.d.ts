@@ -466,6 +466,9 @@ declare global {
       startAniListLogin: (username?: string) => Promise<
         AuthResponse & {
           needsProfile?: boolean;
+          needsUsername?: boolean;
+          signupToken?: string;
+          providerUsername?: string;
           importPending?: boolean;
           anilist?: {
             id: number;
@@ -478,7 +481,7 @@ declare global {
           };
         }
       >;
-      completeAniListLogin: (username: string) => Promise<
+      completeAniListLogin: (username: string, signupToken?: string) => Promise<
         AuthResponse & {
           importPending?: boolean;
           import?: {
@@ -490,6 +493,9 @@ declare global {
       startMalLogin: (username?: string) => Promise<
         AuthResponse & {
           needsProfile?: boolean;
+          needsUsername?: boolean;
+          signupToken?: string;
+          providerUsername?: string;
           importPending?: boolean;
           mal?: {
             id: number;
@@ -502,7 +508,7 @@ declare global {
           };
         }
       >;
-      completeMalLogin: (username: string) => Promise<
+      completeMalLogin: (username: string, signupToken?: string) => Promise<
         AuthResponse & {
           importPending?: boolean;
           import?: {

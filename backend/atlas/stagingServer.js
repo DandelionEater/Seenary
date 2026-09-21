@@ -125,7 +125,7 @@ function createStagingServer(service, providers = null, media = null, library = 
         : body.method === 'previewTextImport' ? 1024 * 1024
           : body.method === 'mutateLibraryEntry' ? 65536 : 8192;
       if (size > methodLimit) { send(413, { ok: false, message: 'Request too large.' }); return; }
-      if (['register', 'login', 'changePassword', 'beginProviderLogin', 'beginProviderLink', 'unlinkProvider', 'setLocalPassword', 'deleteAccount', 'refreshProvider', 'requestProviderSync'].includes(body.method) && !consume(`auth:${clientAddress}`, config.authLimit)) {
+      if (['register', 'login', 'changePassword', 'beginProviderLogin', 'beginProviderLink', 'completeProviderSignup', 'unlinkProvider', 'setLocalPassword', 'deleteAccount', 'refreshProvider', 'requestProviderSync'].includes(body.method) && !consume(`auth:${clientAddress}`, config.authLimit)) {
         send(429, { ok: false, message: 'Too many authentication attempts.' }); return;
       }
       const token = getToken(req, config.cookieName);
@@ -223,6 +223,11 @@ function createStagingServer(service, providers = null, media = null, library = 
           const browserBinding = /^[a-f0-9]{64}$/.test(binding || '') ? binding : crypto.randomBytes(32).toString('hex');
           result = await providers.begin(body.args[0], body.method === 'beginProviderLink' ? 'link' : 'login', token, browserBinding, body.args[1]);
           if (result.ok) res.setHeader('Set-Cookie', cookie('seenary_oauth_binding', browserBinding, config.secureCookies, 'Lax', 600));
+          break;
+        }
+        case 'completeProviderSignup': {
+          if (!providers) { send(404, { ok: false }); return; }
+          result = await providers.completeSignup(body.args[0], body.args[1], body.args[2], binding);
           break;
         }
         case 'exportAccountData':

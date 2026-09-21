@@ -4,7 +4,7 @@ import { atlasEndpoint, atlasLabel } from './config';
 
 export default function CloudSaveIndicator() {
   const [label, setLabel] = useState(`Cloud saves · ${atlasLabel}`);
-  const [connection, setConnection] = useState<'loading' | 'current' | 'stale' | 'offline' | 'retrying'>(
+  const [connection, setConnection] = useState<'loading' | 'current' | 'stale' | 'offline' | 'retrying' | 'signedOut'>(
     navigator.onLine ? 'loading' : 'offline'
   );
   useEffect(() => {
@@ -16,6 +16,11 @@ export default function CloudSaveIndicator() {
       try {
         const identity = localStorage.getItem(key);
         const user = JSON.parse(identity || 'null');
+        if (!user?.id) {
+          setConnection('signedOut');
+          setLabel('Cloud saves · sign in');
+          return;
+        }
         const state = user?.id ? await storage.read(user.id) : undefined;
         if (stopped || identity !== localStorage.getItem(key)) return;
         const errors = state?.pending.filter(item => item.error).length ?? 0;
@@ -49,6 +54,8 @@ export default function CloudSaveIndicator() {
         ? 'Cloud saves · reconnecting'
         : connection === 'loading'
           ? 'Cloud saves · loading'
-          : label;
+          : connection === 'signedOut'
+            ? 'Cloud saves · sign in'
+            : label;
   return <a href="?atlasReview=1" aria-live="polite" title="Open cloud saves, pending edits, conflicts, backups, and recovery controls" style={{ position: 'fixed', bottom: 12, left: 12, zIndex: 9999, padding: '8px 16px', borderRadius: 8, background: '#30395b', color: 'white' }}>{connectionLabel}</a>;
 }

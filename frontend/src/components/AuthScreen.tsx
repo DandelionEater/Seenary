@@ -30,6 +30,8 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [oauthProfile, setOauthProfile] = useState<{
     provider: "AniList" | "MyAnimeList";
+    providerUsername: string;
+    signupToken: string;
   } | null>(null);
   const [localUsername, setLocalUsername] = useState("");
   const [username, setUsername] = useState("");
@@ -88,22 +90,36 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
     await submit();
   };
 
-  const startAniListLogin = () => {
+  const startProviderLogin = async (provider: "AniList" | "MyAnimeList") => {
     if (busy) return;
-    setOauthProfile({ provider: "AniList" });
-    setLocalUsername(/^[a-zA-Z0-9_]{3,20}$/.test(username.trim()) ? username.trim() : "");
-    setMessage("");
-  };
-
-  const startMalLogin = () => {
-    if (busy) return;
-    setOauthProfile({ provider: "MyAnimeList" });
-    setLocalUsername(/^[a-zA-Z0-9_]{3,20}$/.test(username.trim()) ? username.trim() : "");
-    setMessage("");
+    setBusy(true);
+    setMessage(`Waiting for ${provider} authorization...`);
+    try {
+      const result = provider === "MyAnimeList"
+        ? await window.api.startMalLogin()
+        : await window.api.startAniListLogin();
+      if (result.ok && result.user) {
+        await onAuthenticated({ id: result.user.id, username: result.user.username, tutorial_dismissed: result.user.tutorial_dismissed });
+        return;
+      }
+      if (result.needsUsername && result.signupToken) {
+        setOauthProfile({ provider, providerUsername: result.providerUsername || provider, signupToken: result.signupToken });
+        setLocalUsername("");
+        setMessage(`Connected as ${result.providerUsername || "your provider account"}. Choose your Seenary username.`);
+        return;
+      }
+      setMessage(result.message || `${provider} login failed. Try again.`);
+    } catch (error) {
+      setMessage(errorMessage(error, `${provider} login failed. Try again.`));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const completeOauthSignup = async () => {
     if (busy) return;
+    const profile = oauthProfile;
+    if (!profile) return;
 
     const trimmedUsername = localUsername.trim();
 
@@ -113,13 +129,13 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
     }
 
     setBusy(true);
-    setMessage(`Waiting for ${oauthProfile?.provider || "provider"} authorization...`);
+    setMessage(`Creating your Seenary account with ${profile.provider}...`);
 
     try {
       const result =
-        oauthProfile?.provider === "MyAnimeList"
-          ? await window.api.completeMalLogin(trimmedUsername)
-          : await window.api.completeAniListLogin(trimmedUsername);
+        profile.provider === "MyAnimeList"
+          ? await window.api.completeMalLogin(trimmedUsername, profile.signupToken)
+          : await window.api.completeAniListLogin(trimmedUsername, profile.signupToken);
 
       if (!result.ok || !result.user) {
         setMessage(result.message);
@@ -158,7 +174,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
         <p className="mt-3 text-sm text-white/55">
           {oauthProfile
-            ? `Choose your Seenary username, then authorize with ${oauthProfile.provider}. Existing accounts keep their current Seenary username.`
+            ? `You're connected to ${oauthProfile.provider} as ${oauthProfile.providerUsername}. Choose a Seenary username to finish creating your account.`
             : mode === "login"
               ? "Log in to access your personal Anime and Manga library."
               : "Create your account to start building your Anime and Manga library."}
@@ -241,7 +257,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
             <button
               type="button"
-              onClick={startAniListLogin}
+              onClick={() => void startProviderLogin("AniList")}
               disabled={busy}
               className="flex w-full items-center justify-center rounded-2xl border border-[#2ea6ff]/35 bg-[#2ea6ff]/10 px-4 py-3 font-semibold text-[#bde7ff] transition hover:border-[#2ea6ff]/60 hover:bg-[#2ea6ff]/15 disabled:cursor-not-allowed disabled:opacity-70"
             >
@@ -250,7 +266,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
             <button
               type="button"
-              onClick={startMalLogin}
+              onClick={() => void startProviderLogin("MyAnimeList")}
               disabled={busy}
               className="mt-3 flex w-full items-center justify-center rounded-2xl border border-[#2e51a2]/60 bg-[#2e51a2]/15 px-4 py-3 font-semibold text-[#d6e3ff] transition hover:border-[#2e51a2] hover:bg-[#2e51a2]/25 disabled:cursor-not-allowed disabled:opacity-70"
             >

@@ -75,8 +75,11 @@ async function main() {
     assert.equal((await providers.refresh(bob.token)).ok, true);
     assert.equal(cipher.decrypt((await repo.providerAccounts.findOne({ userId: bob.user.id })).refreshToken), 'refresh-rotated');
     assert.equal((await providers.refresh(alice.token)).ok, false, 'AL requires reauthorization');
-    assert.equal((await authorize('mal', 'login', null, 303)).ok, false, 'new profile requires username');
-    const newUser = await authorize('mal', 'login', null, 303, 'ProviderOnly');
+    const pendingSignup = await authorize('mal', 'login', null, 303);
+    assert.equal(pendingSignup.needsUsername, true, 'new provider identity requests a Seenary username after authorization');
+    assert.equal((await providers.completeSignup('mal', pendingSignup.signupToken, 'ProviderOnly', 'a'.repeat(64))).ok, false, 'signup continuation is browser-bound');
+    assert.equal((await providers.completeSignup('mal', pendingSignup.signupToken, 'ProviderAlice', binding)).ok, false, 'taken username keeps signup available for correction');
+    const newUser = await providers.completeSignup('mal', pendingSignup.signupToken, 'ProviderOnly', binding);
     assert.equal(newUser.ok, true);
     assert.equal(newUser.user.local_credentials_confirmed, false);
     assert.equal((await providers.unlink(newUser.token, 'mal', 'anything')).ok, false);

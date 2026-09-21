@@ -71,6 +71,18 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
       const fields = tokenFields(tokens, cipher);
       const viewer = await adapters[provider].viewer(tokens.access_token);
       if (!Number.isSafeInteger(viewer?.id) || viewer.id <= 0 || typeof viewer.name !== 'string' || !viewer.name || viewer.name.length > 100) return fail('Provider returned invalid identity.');
+      if (flow.mode === 'login' && !flow.username) {
+        const owner = await repo.providerAccounts.findOne({ provider, providerUserId: String(viewer.id) });
+        if (!owner) {
+          const signupToken = crypto.randomBytes(32).toString('hex');
+          await repo.oauthFlows.insertOne({ _id: tokenHash(signupToken), provider, mode: 'signup', bindingHash: flow.bindingHash,
+            providerUserId: String(viewer.id), providerUsername: viewer.name, accessToken: fields.accessToken,
+            refreshToken: fields.refreshToken, providerExpiresAt: fields.expiresAt,
+            expiresAt: new Date(Date.now() + 10 * 60000) });
+          return { ok: false, needsUsername: true, signupToken, providerUsername: viewer.name,
+            message: `Connected to ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'}. Choose your Seenary username.` };
+        }
+      }
       const passwordHash = flow.mode === 'login' && flow.username
         ? await argon2.hash(crypto.randomBytes(48).toString('hex'), { type: argon2.argon2id }) : null;
       let result;
@@ -110,6 +122,38 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
       if (!result.ok) return result;
       return { ok: true, user: safeUser(result.user), account: result.account,
         ...(flow.mode === 'login' ? { token: await accounts.issueSession(result.user) } : {}) };
+    },
+    async completeSignup(provider, signupToken, username, binding) {
+      if (!validProvider(provider) || !/^[a-f0-9]{64}$/.test(signupToken || '') || !/^[a-f0-9]{64}$/.test(binding || '')
+          || typeof username !== 'string' || !/^[a-zA-Z0-9_]{3,20}$/.test(username.trim())) return fail('Invalid account setup request.');
+      const flowQuery = { _id: tokenHash(signupToken), provider, mode: 'signup',
+        bindingHash: tokenHash(binding), expiresAt: { $gt: new Date() } };
+      const flow = await repo.oauthFlows.findOne(flowQuery);
+      if (!flow) return fail('Account setup expired. Connect your provider again.');
+      const passwordHash = await argon2.hash(crypto.randomBytes(48).toString('hex'), { type: argon2.argon2id });
+      try {
+        const result = await transaction(async (session) => {
+          if (!await repo.oauthFlows.findOneAndDelete(flowQuery, { session })) return fail('Account setup expired. Connect your provider again.');
+          const owner = await repo.providerAccounts.findOne({ provider, providerUserId: flow.providerUserId }, { session });
+          if (owner) return fail('This provider account is already connected. Return to login and try again.');
+          const now = new Date();
+          const user = { _id: crypto.randomUUID(), username: username.trim(), username_normalized: normalize(username),
+            password_hash: passwordHash, local_credentials_confirmed: false, tutorial_dismissed: false,
+            authVersion: 0, schemaVersion: 1, lifecycleRevision: 0, created_at: now, updated_at: now, last_login_at: now };
+          await repo.users.insertOne(user, { session });
+          const link = { _id: crypto.randomUUID(), userId: user._id, provider, providerUserId: flow.providerUserId,
+            username: flow.providerUsername, originalUsername: flow.providerUsername, accessToken: flow.accessToken,
+            refreshToken: flow.refreshToken, expiresAt: flow.providerExpiresAt || null, needsReauthorization: false,
+            createdAt: now, updatedAt: now, lastImportAt: null, revision: 0 };
+          await repo.providerAccounts.insertOne(link, { session });
+          return { ok: true, user, account: publicLink(link) };
+        });
+        if (!result.ok) return result;
+        return { ok: true, user: safeUser(result.user), account: result.account, token: await accounts.issueSession(result.user) };
+      } catch (error) {
+        if (error.code === 11000) return fail('That Seenary username is already in use. Choose another one.');
+        throw error;
+      }
     },
     async getLink(token, provider) {
       const user = await accounts.getAuthenticatedUser(token);
