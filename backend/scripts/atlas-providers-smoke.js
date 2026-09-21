@@ -100,6 +100,14 @@ async function main() {
     assert.equal((await providers.settings(alice.token, { autoSyncEnabled: true })).settings.autoSyncEnabled, true);
     assert.equal((await providers.settings(bob.token)).settings.autoSyncEnabled, false);
     assert.equal((await providers.settings(alice.token, { userId: bob.user.id, autoSyncEnabled: true })).ok, false);
+    const firstPull = await providers.requestInboundSync(alice.token, 'anilist');
+    assert.equal(firstPull.isFirstSync, true);
+    const aliceAniList = await repo.providerAccounts.findOne({ userId: alice.user.id, provider: 'anilist' });
+    await repo.providerRefreshStates.updateOne({ _id: aliceAniList._id }, {
+      $set: { lastSuccessAt: new Date(), lastOutcome: 'succeeded' },
+      $unset: { manualRequestedAt: '', leaseUntil: '' },
+    });
+    assert.equal((await providers.requestInboundSync(alice.token, 'anilist')).isFirstSync, false);
 
     let release;
     pendingRefresh = new Promise((resolve) => { release = resolve; });

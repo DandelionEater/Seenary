@@ -237,15 +237,16 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
       if (!link) return fail(`No linked ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} account.`);
       const requestedAt = new Date();
       const pending = await repo.providerRefreshStates.findOne({ _id: link._id });
+      const isFirstSync = !pending?.lastSuccessAt;
       if (pending?.manualRequestedAt || pending?.leaseUntil && new Date(pending.leaseUntil) > requestedAt) {
-        return { ok: true, requestedAt: pending.manualRequestedAt || requestedAt, alreadyQueued: true };
+        return { ok: true, requestedAt: pending.manualRequestedAt || requestedAt, alreadyQueued: true, isFirstSync };
       }
       await repo.providerRefreshStates.updateOne({ _id: link._id }, {
         $set: { userId: user._id, provider, linkRevision: link.revision,
           nextAttemptAt: requestedAt, manualRequestedAt: requestedAt },
         $setOnInsert: { revision: 0 },
       }, { upsert: true });
-      return { ok: true, requestedAt };
+      return { ok: true, requestedAt, isFirstSync };
     },
     async inboundSyncStatus(token, provider) {
       const user = await accounts.getAuthenticatedUser(token);

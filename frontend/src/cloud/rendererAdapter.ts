@@ -19,6 +19,7 @@ type AccountReply = Omit<Reply, 'user'> & {
   settings?: { autoSyncEnabled: boolean; analyticsConsentDecided?: boolean; analyticsEnabled?: boolean };
   requestedAt?: string;
   alreadyQueued?: boolean;
+  isFirstSync?: boolean;
   sync?: {
     running: boolean;
     requestedAt: string | null;
@@ -336,7 +337,9 @@ export function installAtlasRenderer(legacy: Api) {
     const label = provider === 'anilist' ? 'AniList' : 'MyAnimeList';
     return { ok: true, queued: true, message: queued.alreadyQueued
       ? `${label} update is already running in the background.`
-      : `${label} update started in the background. The first reconciliation may take several minutes.` };
+      : queued.isFirstSync
+        ? `${label} update started in the background. The first reconciliation may take several minutes.`
+        : `${label} update started in the background.` };
   }
   async function previewImport(username: string, provider: 'anilist' | 'mal' = 'anilist') {
     const id = user?.id;
