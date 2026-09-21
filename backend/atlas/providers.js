@@ -261,6 +261,7 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
         lastSuccessAt: state.lastSuccessAt || null,
         lastOutcome: state.lastOutcome || null,
         counts: state.lastCounts || null,
+        progress: state.progress || (state.manualRequestedAt ? { stage: 'queued', current: 0, total: null } : null),
       } : null };
     },
     async syncActivity(token) {

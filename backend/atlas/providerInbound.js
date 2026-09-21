@@ -102,7 +102,7 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
   }
   async function finish(claim, update) {
     return repo.providerRefreshStates.updateOne({ _id: claim.state._id, leaseOwner: claim.owner }, { ...update,
-      $unset: { ...(update.$unset || {}), leaseOwner: '', leaseUntil: '' }, $inc: { revision: 1 } });
+      $unset: { ...(update.$unset || {}), progress: '', leaseOwner: '', leaseUntil: '' }, $inc: { revision: 1 } });
   }
   const service = {
     seed,
@@ -115,7 +115,8 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
         if (claims.length >= limit) break; const owner = crypto.randomUUID();
         const held = await repo.providerRefreshStates.findOneAndUpdate({ _id: state._id, revision: state.revision,
           $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lte: new Date(now()) } }] },
-        { $set: { leaseOwner: owner, leaseUntil: new Date(now() + 5 * 60000) } }, { returnDocument: 'after' });
+        { $set: { leaseOwner: owner, leaseUntil: new Date(now() + 5 * 60000),
+          progress: { stage: 'starting', current: 0, total: null, updatedAt: new Date(now()) } } }, { returnDocument: 'after' });
         if (held) claims.push({ owner, state: held });
       }
       return claims;
@@ -132,6 +133,8 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
         return { status: 'skipped' };
       }
       try {
+        await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
+          { $set: { progress: { stage: 'fetching', current: 0, total: null, updatedAt: new Date(now()) } } });
         const access = await token(link); link = await repo.providerAccounts.findOne({ _id: link._id });
         const all = [];
         for (const type of ['ANIME', 'MANGA']) { await reserve(link.provider); all.push(...normalize(link.provider, type, await adapters.pull(link.provider, access, type, link.providerUserId))); }
@@ -144,7 +147,10 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
           }
         }
         const counts = { applied: 0, skipped: 0, review: 0 };
-        for (const item of all) {
+        await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
+          { $set: { progress: { stage: 'reconciling', current: 0, total: all.length, updatedAt: new Date(now()) } } });
+        for (let index = 0; index < all.length; index++) {
+          const item = all[index];
           const stillLinked = await repo.providerAccounts.findOne({ _id: link._id, userId: state.userId, provider: link.provider });
           const stillOwned = await repo.providerRefreshStates.findOne({ _id: state._id, leaseOwner: claim.owner });
           if (!stillLinked || !stillOwned || stillLinked.needsReauthorization) {
@@ -159,14 +165,18 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
           }
           const outcome = await apply(state.userId, link.provider, item, document._id, observedAt);
           if (outcome === 'applied') counts.applied++; else counts.skipped++;
+          if ((index + 1) % 10 === 0 || index + 1 === all.length) {
+            await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
+              { $set: { progress: { stage: 'reconciling', current: index + 1, total: all.length, updatedAt: new Date(now()) } } });
+          }
         }
         await finish(claim, { $set: { linkRevision: link.revision, nextAttemptAt: new Date(now() + intervalMs), lastSuccessAt: new Date(now()),
-          lastOutcome: 'success', lastCounts: counts, attempts: 0 }, ...(manual ? { $unset: { manualRequestedAt: '' } } : {}) });
+          lastOutcome: 'success', lastCounts: counts, attempts: 0 }, $unset: { progress: '', ...(manual ? { manualRequestedAt: '' } : {}) } });
         return { status: 'succeeded', counts };
       } catch (error) {
         const attempts = (state.attempts || 0) + 1; const retry = error.retryAfter ? error.retryAfter * 1000 : Math.min(30000 * 2 ** (attempts - 1), 6 * 3600000);
         await finish(claim, { $set: { attempts, nextAttemptAt: new Date(now() + retry), lastOutcome: error.terminal ? 'reauthorization-required' : 'retry',
-          lastErrorCode: /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code || '') ? error.code : 'PROVIDER_UNAVAILABLE' } });
+          lastErrorCode: /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code || '') ? error.code : 'PROVIDER_UNAVAILABLE' }, $unset: { progress: '' } });
         return { status: error.terminal ? 'failed' : 'retry' };
       }
     },

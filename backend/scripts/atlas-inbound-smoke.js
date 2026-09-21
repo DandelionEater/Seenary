@@ -39,10 +39,15 @@ const malPayload = (id, type) => ({ data: [{ node: { id, title: 'Mapped title' }
 
 async function scenario(repo, client, media) {
   let clock = 1700000000000; const userId = await link(repo, 'al', 'anilist'); let pullCalls = 0;
+  let observedProgress;
   const adapters = { refresh: async () => { throw new Error('unexpected'); }, mapMal: async () => [],
-    pull: async (_provider, token, type) => { assert.equal(token, 'al-access'); pullCalls++; return type === 'ANIME' ? alPayload(11) : { lists: [] }; } };
+    pull: async (_provider, token, type) => { assert.equal(token, 'al-access'); pullCalls++;
+      observedProgress = await repo.providerRefreshStates.findOne({ _id: 'link-al' });
+      return type === 'ANIME' ? alPayload(11) : { lists: [] }; } };
   let inbound = createProviderInbound({ client, repo, media, cipher, adapters, now: () => clock, spacing: { anilist: 0, mal: 0 } });
   let result = await inbound.runOnce(1); assert.equal(result.results[0].status, 'succeeded'); assert.equal(pullCalls, 2);
+  assert.equal(observedProgress.progress.stage, 'fetching');
+  assert.equal((await repo.providerRefreshStates.findOne({ _id: 'link-al' })).progress, undefined);
   let document = await repo.media.findOne({ anilistId: 11 }); let entry = await repo.libraryEntries.findOne({ userId, mediaId: document._id });
   assert.equal(entry.progress, 4); assert.equal(entry.score, 80); assert.equal(entry.isFavorite, false); assert.equal(entry.revision, 1);
   assert.equal(await repo.jobs.countDocuments({}), 0, 'inbound reconciliation must not echo into the outbound queue');

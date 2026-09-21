@@ -1042,6 +1042,9 @@ export function SettingsPage({
 
     const removeListener = window.api.onSyncProgress((progress: SyncProgressEvent) => {
       setSyncProgress(progress);
+      if (progress.operation === "pull-anilist" || progress.operation === "pull-mal") {
+        setIsPullingFromRemote(!["complete", "failed"].includes(progress.stage));
+      }
     });
 
     return () => {
@@ -1767,6 +1770,10 @@ export function SettingsPage({
         syncStatus.provider === "mal"
           ? await onPullFromMal()
           : await onPullFromAniList();
+      if (!result.ok) {
+        setIsPullingFromRemote(false);
+        setSyncProgress(null);
+      }
       await loadSyncStatus();
 
       setSyncStatus((current) => ({
@@ -1780,13 +1787,10 @@ export function SettingsPage({
       if (isSyncActivityOpen) {
         await loadSyncActivity(syncActivityTab);
       }
-    } finally {
-      window.setTimeout(() => {
-        setIsPullingFromRemote(false);
-        setSyncProgress((current) =>
-          current?.operation === operation ? null : current
-        );
-      }, 700);
+    } catch (error) {
+      setIsPullingFromRemote(false);
+      setSyncProgress((current) => current?.operation === operation ? null : current);
+      throw error;
     }
   }
 
@@ -4123,6 +4127,14 @@ export function SettingsPage({
                   >
                     {isPullingFromRemote ? "Updating..." : `Update from ${syncTargetLabel}`}
                   </ProgressActionButton>
+                  {isPullingFromRemote && syncProgress?.operation === (isAniListSync ? "pull-anilist" : "pull-mal") && (
+                    <p className="mt-3 text-xs leading-5 text-white/50" aria-live="polite">
+                      {syncProgress.label}
+                      {Number(syncProgress.total) > 0
+                        ? ` ${Number(syncProgress.current || 0).toLocaleString()} of ${Number(syncProgress.total).toLocaleString()} titles.`
+                        : ""}
+                    </p>
+                  )}
                 </div>
               </div>
 

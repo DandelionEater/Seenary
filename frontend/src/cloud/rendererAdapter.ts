@@ -26,6 +26,7 @@ type AccountReply = Omit<Reply, 'user'> & {
     lastSuccessAt: string | null;
     lastOutcome: string | null;
     counts: { applied?: number; skipped?: number; review?: number } | null;
+    progress?: { stage: string; current: number; total: number | null } | null;
   } | null;
 };
 type ImportItem = SaveListEntryPayload & { animeId: number; mangaId?: number; mediaType?: 'ANIME' | 'MANGA'; media?: AnimeMedia; title?: AnimeMedia['title']; isRepeating?: boolean };
@@ -303,13 +304,26 @@ export function installAtlasRenderer(legacy: Api) {
   async function watchProviderPull(provider: 'anilist' | 'mal', requestedAt: number) {
     if (watchedProviderPulls.has(provider)) return;
     watchedProviderPulls.add(provider);
+    const operation = provider === 'anilist' ? 'pull-anilist' : 'pull-mal';
     try {
-      const operation = provider === 'anilist' ? 'pull-anilist' : 'pull-mal';
       progressListeners.forEach(listener => listener({ operation, stage: 'fetching', label: `Updating from ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'}…`, current: 0, total: null }));
       const deadline = Date.now() + 10 * 60000;
       while (Date.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, 3000));
         const status = await rpc('getProviderSyncStatus', [provider], user?.id);
+        const remoteProgress = status.sync?.progress;
+        if (remoteProgress) {
+          const providerLabel = provider === 'anilist' ? 'AniList' : 'MyAnimeList';
+          const labels: Record<string, string> = {
+            queued: `Waiting for the ${providerLabel} worker…`,
+            starting: `Starting ${providerLabel} update…`,
+            fetching: `Downloading Anime and Manga lists from ${providerLabel}…`,
+            reconciling: `Reconciling ${providerLabel} library…`,
+          };
+          progressListeners.forEach(listener => listener({ operation, stage: remoteProgress.stage,
+            label: labels[remoteProgress.stage] || `Updating from ${providerLabel}…`,
+            current: remoteProgress.current, total: remoteProgress.total }));
+        }
         const completedAt = Date.parse(String(status.sync?.lastSuccessAt || ''));
         if (Number.isFinite(completedAt) && completedAt >= requestedAt) {
           refreshNeeded = true;
@@ -326,7 +340,10 @@ export function installAtlasRenderer(legacy: Api) {
           return;
         }
       }
-    } catch { /* The worker keeps running; the regular cloud refresh will catch up. */ }
+      progressListeners.forEach(listener => listener({ operation, stage: 'failed', label: 'The update is still running, but live progress timed out.' }));
+    } catch {
+      progressListeners.forEach(listener => listener({ operation, stage: 'failed', label: 'Live update progress is temporarily unavailable.' }));
+    }
     finally { watchedProviderPulls.delete(provider); }
   }
   async function pullProvider(provider: 'anilist' | 'mal') {
