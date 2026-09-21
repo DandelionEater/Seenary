@@ -4072,10 +4072,11 @@ export function SettingsPage({
                   checked={syncStatus.autoSyncEnabled}
                   disabled={!syncStatus.linked || syncStatus.loading}
                   onChange={updateAutoSync}
+                  centerIcon
                 />
 
                 <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex min-w-0 items-start gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
                     <div className="shrink-0 rounded-2xl border border-white/10 bg-white/5 p-2 text-white/65">
                       <ArrowPathIcon className="h-5 w-5" />
                     </div>
@@ -4112,7 +4113,7 @@ export function SettingsPage({
                 </div>
 
                 <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex min-w-0 items-start gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
                     <div className="shrink-0 rounded-2xl border border-white/10 bg-white/5 p-2 text-white/65">
                       <ArrowPathIcon className="h-5 w-5" />
                     </div>
@@ -5435,6 +5436,7 @@ function ToggleSetting({
   checked,
   disabled = false,
   onChange,
+  centerIcon = false,
 }: {
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   title: string;
@@ -5442,6 +5444,7 @@ function ToggleSetting({
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void | Promise<void>;
+  centerIcon?: boolean;
 }) {
   return (
     <button
@@ -5456,7 +5459,7 @@ function ToggleSetting({
           : "border-white/10 bg-white/[0.03] hover:bg-white/8"
       }`}
     >
-      <div className="flex min-w-0 items-start gap-3">
+      <div className={`flex min-w-0 gap-3 ${centerIcon ? "items-center" : "items-start"}`}>
         <div className={`rounded-2xl border p-2 ${
           checked
             ? "border-[var(--app-accent)]/25 bg-[var(--app-accent-soft)] text-white/80"
