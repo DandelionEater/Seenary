@@ -65,6 +65,9 @@ async function main() {
   start('Atlas API', process.execPath, [path.join(__dirname, 'start-atlas-local.js')], backendDir);
   await waitForPort(3001, 'Atlas API', 45000);
 
+  console.log('Starting the Atlas sync worker...');
+  start('Atlas sync worker', process.execPath, [path.join(__dirname, 'start-atlas-local.js'), '--worker'], backendDir);
+
   console.log('Starting the Atlas frontend…');
   start('Vite frontend', npmCommand, ['run', 'dev:atlas'], frontendDir);
   await waitForPort(5173, 'Vite frontend', 30000);

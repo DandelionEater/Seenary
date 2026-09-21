@@ -79,6 +79,11 @@ async function useDirectAtlasSeeds() {
 
 async function main() {
   await useDirectAtlasSeeds();
+  if (process.argv.includes('--worker')) {
+    process.argv = ['node', 'atlas-worker', '--watch'];
+    require('./atlas-worker');
+    return;
+  }
   process.env.ATLAS_ANILIST_REDIRECT_URI ||= 'http://127.0.0.1:37645/auth/anilist/callback';
   process.env.ATLAS_MAL_REDIRECT_URI ||= 'http://127.0.0.1:4000/auth/mal/callback';
   await startCallbackRelay('anilist', process.env.ATLAS_ANILIST_REDIRECT_URI);
