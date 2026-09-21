@@ -52,6 +52,18 @@ async function scenario(repo, client, media) {
   assert.equal(entry.progress, 4); assert.equal(entry.score, 80); assert.equal(entry.isFavorite, false); assert.equal(entry.revision, 1);
   assert.equal(await repo.jobs.countDocuments({}), 0, 'inbound reconciliation must not echo into the outbound queue');
   assert.equal((await repo.libraryChanges.findOne({ userId })).source, 'provider:anilist');
+  await repo.libraryEntries.updateOne({ userId, mediaId: document._id }, { $set: { inboundSources: {} } });
+  clock += 6 * 3600000 + 1;
+  result = await inbound.runOnce(1);
+  assert.equal(result.results[0].counts.applied, 0);
+  assert.equal(result.results[0].counts.skipped, 1, 'unchanged provider revisions bypass per-entry reconciliation');
+  assert.equal(new Date((await repo.libraryEntries.findOne({ userId, mediaId: document._id })).inboundSources.anilist).getTime(), 1700000001000,
+    'matching migrated rows record the provider revision without rewriting the library entry');
+  clock += 6 * 3600000 + 1;
+  result = await inbound.runOnce(1);
+  assert.equal(result.results[0].counts.skipped, 1, 'recorded provider revisions bypass later reconciliation runs');
+  assert.equal((await repo.libraryEntries.findOne({ userId, mediaId: document._id })).revision, 1);
+  clock = 1700000000000;
 
   const repoManual = localRepo(); const manualUser = await link(repoManual, 'manual', 'anilist');
   await repoManual.accountSettings.updateOne({ _id: manualUser }, { $set: { autoSyncEnabled: false } });

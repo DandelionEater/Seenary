@@ -92,7 +92,9 @@ function createMalMetadataService({ media, repo, now = () => Date.now() }) {
         const groups = { ...(source.groups || {}) };
         const complete = group === 'card' || ['synopsis', 'genres', 'status', type === 'ANIME' ? 'num_episodes' : 'num_chapters',
           ...(type === 'MANGA' ? ['num_volumes'] : [])].every(key => Object.hasOwn(projected, key));
-        if (complete) groups[group] = { fetchedAt: new Date(observedAt), freshUntil: new Date(observedAt + refreshDelay(STATUS[raw.status])) };
+        if (complete) groups[group] = { fetchedAt: new Date(observedAt), freshUntil: new Date(observedAt + refreshDelay(STATUS[raw.status], {
+          type, endDate: raw.end_date,
+        }, observedAt)) };
         const fieldObservedAt = { ...source.fieldObservedAt };
         for (const key of Object.keys(canonical(selected, type))) fieldObservedAt[key] = new Date(observedAt);
         const nextSource = { ...source, details, metrics, groups, fieldObservedAt,

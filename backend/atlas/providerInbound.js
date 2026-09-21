@@ -84,7 +84,12 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
       if (provider === 'mal' && new Date(current?.inboundSources?.anilist || 0).getTime() > (item.remoteUpdatedAt || observedAt)) return 'anilist-newer';
       const fields = { ...DEFAULT_FIELDS, ...Object.fromEntries(Object.keys(DEFAULT_FIELDS).filter(key => current && Object.hasOwn(current, key)).map(key => [key, current[key]])), ...item.fields };
       const changed = !current || current.deleted || Object.keys(DEFAULT_FIELDS).some(key => current[key] !== fields[key]);
-      if (!changed) return 'unchanged';
+      if (!changed) {
+        await repo.libraryEntries.updateOne({ _id: id, revision: current.revision }, {
+          $set: { [`inboundSources.${provider}`]: new Date(item.remoteUpdatedAt || observedAt) },
+        }, { session });
+        return 'unchanged';
+      }
       const state = await repo.libraryState.findOneAndUpdate({ _id: userId }, { $inc: { sequence: 1 },
         $setOnInsert: { epoch: crypto.randomUUID(), retainedFrom: 0 } }, { upsert: true, returnDocument: 'after', session });
       const next = { _id: id, userId, mediaId, type: item.type, ...fields, deleted: false, revision: (current?.revision || 0) + 1,
@@ -146,11 +151,23 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
             for (const item of items.slice(offset, offset + 50)) item.mapping = byMal.get(item.providerId) || null;
           }
         }
-        const counts = { applied: 0, skipped: 0, review: 0 };
+        const providerKey = link.provider === 'anilist' ? 'anilistId' : 'malId';
+        const mediaRows = all.length ? await repo.media.find({ $or: all.map(item => ({ type: item.type, [providerKey]: item.providerId })) }).toArray() : [];
+        const mediaByProvider = new Map(mediaRows.map(document => [`${document.type}:${document[providerKey]}`, document]));
+        const mediaIds = mediaRows.map(document => document._id);
+        const existingRows = mediaIds.length ? await repo.libraryEntries.find({ userId: state.userId, mediaId: { $in: mediaIds } }).toArray() : [];
+        const existingByMedia = new Map(existingRows.map(entry => [entry.mediaId, entry]));
+        const pending = all.filter(item => {
+          if (!item.remoteUpdatedAt) return true;
+          const document = mediaByProvider.get(`${item.type}:${item.providerId}`);
+          const entry = document && existingByMedia.get(document._id);
+          return !entry || new Date(entry.inboundSources?.[link.provider] || 0).getTime() < item.remoteUpdatedAt;
+        });
+        const counts = { applied: 0, skipped: all.length - pending.length, review: 0 };
         await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
-          { $set: { progress: { stage: 'reconciling', current: 0, total: all.length, updatedAt: new Date(now()) } } });
-        for (let index = 0; index < all.length; index++) {
-          const item = all[index];
+          { $set: { progress: { stage: 'reconciling', current: 0, total: pending.length, updatedAt: new Date(now()) } } });
+        for (let index = 0; index < pending.length; index++) {
+          const item = pending[index];
           const stillLinked = await repo.providerAccounts.findOne({ _id: link._id, userId: state.userId, provider: link.provider });
           const stillOwned = await repo.providerRefreshStates.findOne({ _id: state._id, leaseOwner: claim.owner });
           if (!stillLinked || !stillOwned || stillLinked.needsReauthorization) {
@@ -165,9 +182,9 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
           }
           const outcome = await apply(state.userId, link.provider, item, document._id, observedAt);
           if (outcome === 'applied') counts.applied++; else counts.skipped++;
-          if ((index + 1) % 10 === 0 || index + 1 === all.length) {
+          if ((index + 1) % 10 === 0 || index + 1 === pending.length) {
             await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
-              { $set: { progress: { stage: 'reconciling', current: index + 1, total: all.length, updatedAt: new Date(now()) } } });
+              { $set: { progress: { stage: 'reconciling', current: index + 1, total: pending.length, updatedAt: new Date(now()) } } });
           }
         }
         await finish(claim, { $set: { linkRevision: link.revision, nextAttemptAt: new Date(now() + intervalMs), lastSuccessAt: new Date(now()),

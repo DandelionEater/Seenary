@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { createMetadataService, toMedia } = require('../atlas/metadata');
+const { createMetadataService, toMedia, refreshDelay } = require('../atlas/metadata');
 const { createMediaService } = require('../atlas/media');
 const { createStagingServer } = require('../atlas/stagingServer');
 
@@ -60,6 +60,16 @@ class Collection {
 }
 
 async function main() {
+  const hour = 3600000; const day = 24 * hour; const policyNow = Date.UTC(2026, 8, 21);
+  assert.equal(refreshDelay('RELEASING', { type: 'ANIME', nextAiringEpisode: { airingAt: (policyNow + 7 * day) / 1000 } }, policyNow), 6 * day);
+  assert.equal(refreshDelay('RELEASING', { type: 'ANIME', nextAiringEpisode: { airingAt: (policyNow + day) / 1000 } }, policyNow), 12 * hour);
+  assert.equal(refreshDelay('RELEASING', { type: 'ANIME', nextAiringEpisode: { airingAt: (policyNow + 12 * hour) / 1000 } }, policyNow), 6 * hour);
+  assert.equal(refreshDelay('RELEASING', { type: 'ANIME', nextAiringEpisode: { airingAt: (policyNow + 5 * hour) / 1000 } }, policyNow), hour);
+  assert.equal(refreshDelay('RELEASING', { type: 'MANGA' }, policyNow), 6 * hour);
+  assert.equal(refreshDelay('NOT_YET_RELEASED', {}, policyNow), day);
+  assert.equal(refreshDelay('FINISHED', { endDate: { year: 2026, month: 9, day: 1 } }, policyNow), day);
+  assert.equal(refreshDelay('FINISHED', { endDate: { year: 2020, month: 1, day: 1 } }, policyNow), 30 * day);
+  assert.equal(refreshDelay('HIATUS', {}, policyNow), 7 * day);
   const repo = { media: new Collection(), mediaRedirects: new Collection() };
   const queries = new Collection();
   const media = createMediaService({}, repo);

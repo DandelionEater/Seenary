@@ -3,6 +3,7 @@ const { calculateObjectSize } = require('bson');
 const { validId, fillMissing } = require('./media');
 
 const HOUR = 3600000;
+const DAY = 24 * HOUR;
 const CARD_FIELDS = ['title', 'coverImage', 'bannerImage', 'isAdult', 'episodes', 'chapters', 'volumes', 'format', 'status', 'season', 'seasonYear', 'duration', 'source', 'countryOfOrigin', 'startDate', 'endDate', 'nextAiringEpisode', 'genres', 'description'];
 const DETAIL_FIELDS = [...CARD_FIELDS, 'synonyms', 'studios', 'tags', 'staff', 'characters', 'relations', 'recommendations', 'externalLinks', 'streamingEpisodes', 'trailer', 'siteUrl'];
 const METRICS = { averageScore: 'average_score', meanScore: 'mean_score', popularity: 'popularity', favourites: 'favourites' };
@@ -21,8 +22,31 @@ function mergePresent(previous, incoming) {
   }
   return result;
 }
-function refreshDelay(status) {
-  return ['FINISHED', 'CANCELLED'].includes(status) ? 7 * 24 * HOUR : status === 'RELEASING' ? 6 * HOUR : 24 * HOUR;
+function fuzzyDateTime(value) {
+  if (!value) return 0;
+  if (typeof value === 'string') return Date.parse(value) || 0;
+  if (!value.year || !value.month || !value.day) return 0;
+  return Date.UTC(value.year, value.month - 1, value.day);
+}
+function refreshDelay(status, media = {}, observedAt = Date.now()) {
+  if (status === 'RELEASING') {
+    const airingAt = Number(media.nextAiringEpisode?.airingAt) * 1000;
+    if (media.type === 'ANIME' && Number.isFinite(airingAt) && airingAt > observedAt) {
+      const remaining = airingAt - observedAt;
+      if (remaining > DAY) return Math.min(6 * DAY, remaining - DAY);
+      if (remaining > 12 * HOUR) return remaining - 12 * HOUR;
+      if (remaining > 6 * HOUR) return remaining - 6 * HOUR;
+      return Math.min(HOUR, remaining);
+    }
+    return 6 * HOUR;
+  }
+  if (status === 'NOT_YET_RELEASED') return DAY;
+  if (status === 'FINISHED') {
+    const endedAt = fuzzyDateTime(media.endDate);
+    return endedAt && observedAt - endedAt <= 30 * DAY ? DAY : 30 * DAY;
+  }
+  if (['HIATUS', 'CANCELLED'].includes(status)) return 7 * DAY;
+  return 7 * DAY;
 }
 function toMedia(document, cache = {}) {
   const meta = document.metadata;
@@ -87,7 +111,7 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
       const groups = { ...(source.groups || {}) };
       // A card response never renews the details clock.
       const complete = group === 'card' || ['description', 'genres', 'staff', 'characters', 'relations', 'recommendations'].every(key => Object.hasOwn(raw, key));
-      if (complete) groups[group] = { fetchedAt: new Date(observedAt), freshUntil: new Date(observedAt + refreshDelay(raw.status)) };
+      if (complete) groups[group] = { fetchedAt: new Date(observedAt), freshUntil: new Date(observedAt + refreshDelay(raw.status, { ...raw, type }, observedAt)) };
       const nextSource = { ...source, details, metrics, groups, observedAt: new Date(Math.max(observedAt, new Date(source.observedAt || 0).getTime())) };
       if (calculateObjectSize({ ...document, metadata, sources: { ...document.sources, anilist: nextSource } }) > 12 * 1024 * 1024) throw new Error('Metadata exceeds storage limit.');
       const updated = await repo.media.findOneAndUpdate({ _id: document._id, revision: document.revision }, { $set: { metadata,
