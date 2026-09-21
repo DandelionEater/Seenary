@@ -56,12 +56,12 @@ function runCommand(label, command, args, options = {}) {
   return true;
 }
 
-function runNpm(label, args, cwd) {
+function runNpm(label, args, cwd, options = {}) {
   const npmExecPath = process.env.npm_execpath;
   if (npmExecPath && fs.existsSync(npmExecPath)) {
-    return runCommand(label, process.execPath, [npmExecPath, ...args], { cwd, shell: false });
+    return runCommand(label, process.execPath, [npmExecPath, ...args], { cwd, shell: false, ...options });
   }
-  return runCommand(label, npmCommand, args, { cwd });
+  return runCommand(label, npmCommand, args, { cwd, ...options });
 }
 
 function listJavaScriptFiles(directory) {
@@ -340,7 +340,13 @@ function main() {
     }
   );
   runNpm('Frontend lint', ['run', 'lint'], frontendDir);
-  runNpm('Frontend production build', ['run', 'build'], frontendDir);
+  runNpm('Frontend production build', ['run', 'build'], frontendDir, {
+    env: {
+      ...process.env,
+      VITE_ATLAS_PRODUCTION: 'true',
+      VITE_API_BASE_URL: 'https://api.seenary.app',
+    },
+  });
   runDataSmoke('fresh');
   runDataSmoke('legacy');
   runSecuritySmoke();

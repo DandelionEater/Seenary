@@ -77,7 +77,7 @@ type AppSettings = {
 };
 
 type SyncActivityItem = {
-  id: number;
+  id: number | string;
   user_id?: number;
   anime_id?: number | null;
   manga_id?: number | null;
@@ -439,13 +439,13 @@ declare global {
         excluded?: SyncActivityItem[];
       }>;
       restoreSyncExclusion: (payload: {
-        id?: number;
+        id?: number | string;
         provider: "anilist" | "mal";
         mediaType: MediaType;
         mediaId: number;
       }) => Promise<{ ok: boolean; message: string }>;
       excludeSyncEntry: (payload: {
-        id?: number;
+        id?: number | string;
         provider: "anilist" | "mal";
         mediaType: MediaType;
         mediaId: number;
@@ -462,7 +462,7 @@ declare global {
 
       register: (username: string, password: string) => Promise<AuthResponse>;
       login: (username: string, password: string) => Promise<AuthResponse>;
-      startAniListLogin: () => Promise<
+      startAniListLogin: (username?: string) => Promise<
         AuthResponse & {
           needsProfile?: boolean;
           importPending?: boolean;
@@ -486,7 +486,7 @@ declare global {
           };
         }
       >;
-      startMalLogin: () => Promise<
+      startMalLogin: (username?: string) => Promise<
         AuthResponse & {
           needsProfile?: boolean;
           importPending?: boolean;
@@ -606,7 +606,8 @@ declare global {
         localCredentialsConfirmed?: boolean;
       }>;
       logout: () => Promise<{ ok: boolean; message: string }>;
-      deleteAccount: (usernameConfirmation: string) => Promise<{ ok: boolean; message: string }>;
+      exportAccountData: () => Promise<{ ok: boolean; message?: string; export?: unknown }>;
+      deleteAccount: (usernameConfirmation: string, password: string) => Promise<{ ok: boolean; message: string }>;
       getSession: () => Promise<SessionResponse>;
 
       setTutorialDismissed: (dismissed: boolean) => Promise<{
@@ -650,6 +651,11 @@ declare global {
         ok: boolean;
         message: string;
       }>;
+      resolveMyListConflict: (animeId: number, choice: "cloud" | "device") => Promise<{
+        ok: boolean;
+        message: string;
+        entry?: TrackedAnimeEntry | null;
+      }>;
 
       getMyMangaList: () => Promise<{
         ok: boolean;
@@ -686,6 +692,11 @@ declare global {
       removeMyMangaListEntry: (mangaId: number) => Promise<{
         ok: boolean;
         message: string;
+      }>;
+      resolveMyMangaListConflict: (mangaId: number, choice: "cloud" | "device") => Promise<{
+        ok: boolean;
+        message: string;
+        entry?: TrackedMangaEntry | null;
       }>;
 
       clearMyList: (options?: { queueProviderDeletion?: boolean }) => Promise<{

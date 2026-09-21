@@ -155,6 +155,12 @@ export function StudioCatalogPage({
           </div>
         </header>
 
+        {catalog?.warning && (
+          <p role="status" className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
+            {catalog.warning}
+          </p>
+        )}
+
         {loading ? (
           <div className="flex min-h-72 items-center justify-center text-white/55">
             <ArrowPathIcon className="mr-3 h-5 w-5 animate-spin" />

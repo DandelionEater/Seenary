@@ -37,6 +37,8 @@ function toMedia(document, cache = {}) {
   const present = Object.fromEntries(Object.entries(legacy).filter(([, value]) => value !== undefined));
   const result = { ...fillMissing(present, document.sources.anilist?.details || {}), id: legacy.id, idMal: legacy.idMal, type: document.type,
     seenaryId: document._id, cache: { provider: 'anilist', ...cache } };
+  if (result.cache.provider === 'mal') result.warning = 'AniList is unavailable. Showing MyAnimeList information while Seenary retries in the background.';
+  else if (result.cache.stale) result.warning = 'Live title information is unavailable. Showing the latest details saved by Seenary.';
   result.providerMetrics = { anilist: document.sources.anilist?.metrics || {}, mal: document.sources.mal?.metrics || {} };
   for (const [camel, column] of Object.entries(METRICS)) if (document.sources.anilist?.metrics?.[column] !== undefined) result[camel] = document.sources.anilist.metrics[column];
   return result;
@@ -219,6 +221,24 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
             previewUrl: item.previewUrl, media: byId.get(item.anilistId) }] : []),
           ...(stale ? { warning: 'Some artist or title information is being served from the saved cache.' } : {}) };
       }
+      if (method === 'getCharacterDetails' || method === 'getStaffDetails') {
+        const id = Number(args[0]);
+        const kind = method === 'getCharacterDetails' ? 'character' : 'staff';
+        if (!validId(id)) throw new Error('Invalid person identity.');
+        const result = await fetchCached(`${kind}:${id}`, () => provider.person(kind, id), 7 * 24 * HOUR, payload => {
+          if (payload?.id !== id || !payload.name || typeof payload.name !== 'object') throw new Error('Invalid person response.');
+        });
+        return { ...result.payload, ...(result.stale ? { warning: 'Showing a saved profile while AniList is unavailable.' } : {}) };
+      }
+      if (method === 'getAnimeThemeMusic') {
+        const id = Number(args[0]);
+        const titles = Array.isArray(args[1]) ? args[1].filter(value => typeof value === 'string' && value.trim()).slice(0, 20).map(value => value.trim().slice(0, 300)) : [];
+        if (!validId(id)) throw new Error('Invalid Anime identity.');
+        const result = await fetchCached(JSON.stringify(['animethemes:title', id, titles]), () => provider.themes(id, titles), 24 * HOUR, payload => {
+          if (!Array.isArray(payload) || payload.length > 500) throw new Error('Invalid AnimeThemes response.');
+        });
+        return result.stale ? result.payload.map(item => ({ ...item, cache: { stale: true } })) : result.payload;
+      }
       if (method === 'searchMedia') {
         const text = String(args[0] || '').trim();
         if (text.length < 2 || text.length > 150) return { anime: [], manga: [], characters: [], studios: [] };
@@ -238,7 +258,11 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
             if (!Array.isArray(payload?.anime?.shelves) || !Array.isArray(payload?.manga?.shelves)) throw new Error('Invalid discovery response.');
             return ingestTree(payload, null, time);
           });
-          return { ...result.payload, cache: { stale: result.stale } };
+          const payload = structuredClone(result.payload);
+          if (result.stale) for (const type of ['anime', 'manga']) {
+            if (Array.isArray(payload[type]?.shelves)) payload[type].shelves = payload[type].shelves.map(shelf => ({ ...shelf, warning: shelf.warning || 'Showing saved discovery results while AniList is unavailable.' }));
+          }
+          return { ...payload, cache: { stale: result.stale } };
         } catch {
           const documents = await repo.media.find(hideAdultContent ? { 'metadata.is_adult': { $in: [false, 0] } } : {}).sort({ _id: 1 }).limit(80).toArray();
           const section = type => ({ trending: [], shelves: [{ id: 'saved-catalog', title: 'Saved catalog', description: 'AniList is unavailable. These titles are saved in Seenary.',

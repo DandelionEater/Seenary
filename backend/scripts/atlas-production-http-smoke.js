@@ -6,9 +6,21 @@ async function main() {
   process.env.ATLAS_CLIENT_GATE_MODE = 'enforce'; process.env.ATLAS_MIN_CLIENT_VERSION = '0.1.12-beta';
   const service = {
     register: async () => ({ ok: true, token: 'a'.repeat(64), user: { id: 'user' } }),
-    login: async () => ({ ok: false }), getSession: async () => ({ authenticated: false }), logout: async () => ({ ok: true }),
+    login: async () => ({ ok: false }), getSession: async token => ({ authenticated: token === 'a'.repeat(64), user: token ? { id: 'user' } : null }), logout: async () => ({ ok: true }),
   };
-  const server = createStagingServer(service, null, null, null, null, null, { loopbackOnly: false, secureCookies: true,
+  let popupBinding;
+  const providers = {
+    begin: async (provider, mode, token, binding, username) => {
+      popupBinding = binding;
+      assert.equal(provider, 'anilist'); assert.equal(mode, 'login'); assert.equal(token, undefined); assert.equal(username, 'PopupUser');
+      return { ok: true, authorizationUrl: 'https://anilist.co/api/v2/oauth/authorize?state=' + 'b'.repeat(64) };
+    },
+    complete: async (provider, state, code, binding) => {
+      assert.equal(provider, 'anilist'); assert.equal(state, 'b'.repeat(64)); assert.equal(code, 'provider-code'); assert.equal(binding, popupBinding);
+      return { ok: true, token: 'c'.repeat(64), user: { id: 'cloud-user', username: 'PopupUser' } };
+    },
+  };
+  const server = createStagingServer(service, providers, null, null, null, null, { loopbackOnly: false, secureCookies: true,
     cookieName: 'seenary_sid', allowedOrigins: ['https://seenary.app'], healthCheck: async () => ({ ok: true, storage: { level: 'ok' } }) });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -24,7 +36,18 @@ async function main() {
     assert.equal(registered.status, 200); assert.match(registered.headers.get('set-cookie'), /^seenary_sid=/); assert.match(registered.headers.get('set-cookie'), /; Secure/);
     assert.equal(registered.headers.get('strict-transport-security'), 'max-age=31536000; includeSubDomains');
     assert.equal((await registered.json()).token, undefined);
-    console.log('PASS: hosted Atlas HTTP shell enforces origins and client versions, exposes safe health, strips session tokens, and emits secure cookies/security headers.');
+    const sessionCookie = registered.headers.get('set-cookie').split(';')[0];
+    const emptyTextPreview = await fetch(`${origin}/rpc`, { method: 'POST', headers: { Origin: 'https://seenary.app', Cookie: sessionCookie, 'Content-Type': 'application/json', 'X-Seenary-Version': '0.1.12-beta' },
+      body: JSON.stringify({ method: 'previewTextImport', args: ['', true, 'ANIME'] }) });
+    assert.equal(emptyTextPreview.status, 200); assert.equal((await emptyTextPreview.json()).ok, false);
+    const popupStart = await fetch(`${origin}/auth/anilist/start?username=PopupUser`, { redirect: 'manual', headers: { Accept: 'text/html' } });
+    assert.equal(popupStart.status, 302); assert.match(popupStart.headers.get('set-cookie'), /^seenary_oauth_binding=/);
+    const bindingCookie = popupStart.headers.get('set-cookie').split(';')[0];
+    const callback = await fetch(`${origin}/auth/anilist/callback?state=${'b'.repeat(64)}&code=provider-code`, { headers: { Accept: 'text/html', Cookie: bindingCookie } });
+    const callbackHtml = await callback.text();
+    assert.match(callback.headers.get('content-type'), /^text\/html/); assert.match(callbackHtml, /seenary:provider-auth-complete/);
+    assert.match(callback.headers.get('set-cookie'), /^seenary_sid=/); assert.doesNotMatch(callbackHtml, /"token"|cccccccc/);
+    console.log('PASS: hosted Atlas HTTP shell enforces origins and client versions, exposes safe health, strips session tokens, emits secure cookies, and completes first-party popup authorization.');
   } finally {
     await new Promise(resolve => server.close(resolve));
     if (previousMode === undefined) delete process.env.ATLAS_CLIENT_GATE_MODE; else process.env.ATLAS_CLIENT_GATE_MODE = previousMode;

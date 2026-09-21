@@ -36,8 +36,10 @@ async function setupProviders(db, prefix = '') {
       }
     }
   }
-  // Preserve the current single-active-provider policy and global ownership.
-  await repo.providerAccounts.createIndex({ userId: 1 }, { unique: true });
+  const indexes = await repo.providerAccounts.indexes();
+  const legacyUserIndex = indexes.find(index => index.unique && Object.keys(index.key || {}).length === 1 && index.key.userId === 1);
+  if (legacyUserIndex) await repo.providerAccounts.dropIndex(legacyUserIndex.name);
+  await repo.providerAccounts.createIndex({ userId: 1, provider: 1 }, { unique: true });
   await repo.providerAccounts.createIndex({ provider: 1, providerUserId: 1 }, { unique: true });
   await repo.oauthFlows.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
   await repo.oauthFlows.createIndex({ userId: 1 });

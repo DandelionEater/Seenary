@@ -116,6 +116,7 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('auth:set-local-password', { password }),
 
   logout: () => ipcRenderer.invoke('auth:logout'),
+  exportAccountData: async () => ({ ok: true, export: await ipcRenderer.invoke('backup:export', {}) }),
   deleteAccount: (usernameConfirmation) =>
     ipcRenderer.invoke('auth:delete-account', usernameConfirmation),
 

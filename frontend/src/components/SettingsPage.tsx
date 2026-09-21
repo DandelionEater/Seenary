@@ -222,10 +222,11 @@ type SettingsPageProps = {
     message: string;
     removedCount?: number;
   }>;
-  onDeleteAccount: (usernameConfirmation: string) => Promise<{
+  onDeleteAccount: (usernameConfirmation: string, password: string) => Promise<{
     ok: boolean;
     message: string;
   }>;
+  onExportAccountData: () => Promise<void>;
   onExportLocalBackup: () => Promise<void>;
   onImportLocalBackup: (
     backup: unknown,
@@ -321,7 +322,7 @@ type DesktopWindowState = {
   feedback: { kind: "success" | "error"; message: string } | null;
 };
 type SyncActivityItem = {
-  id: number;
+  id: number | string;
   anime_id?: number | null;
   manga_id?: number | null;
   media_type?: "ANIME" | "MANGA";
@@ -719,6 +720,7 @@ export function SettingsPage({
   onImportTextList,
   onClearLists,
   onDeleteAccount,
+  onExportAccountData,
   onExportLocalBackup,
   onImportLocalBackup,
   onLinkAniListAccount,
@@ -761,6 +763,7 @@ export function SettingsPage({
     message: string;
   } | null>(null);
   const [isExportingBackup, setIsExportingBackup] = useState(false);
+  const [isExportingAccountData, setIsExportingAccountData] = useState(false);
   const [isImportingBackup, setIsImportingBackup] = useState(false);
   const [isCacheRepairConfirmOpen, setIsCacheRepairConfirmOpen] = useState(false);
   const [isRepairingCache, setIsRepairingCache] = useState(false);
@@ -783,6 +786,7 @@ export function SettingsPage({
   const [isClearingList, setIsClearingList] = useState(false);
   const [isDeleteAccountArmed, setIsDeleteAccountArmed] = useState(false);
   const [deleteAccountConfirmation, setDeleteAccountConfirmation] = useState("");
+  const [deleteAccountPassword, setDeleteAccountPassword] = useState("");
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [deleteAccountFeedback, setDeleteAccountFeedback] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState({
@@ -871,8 +875,8 @@ export function SettingsPage({
     pulled: [],
     excluded: [],
   });
-  const [restoringSyncExclusionId, setRestoringSyncExclusionId] = useState<number | null>(null);
-  const [excludingSyncEntryId, setExcludingSyncEntryId] = useState<number | null>(null);
+  const [restoringSyncExclusionId, setRestoringSyncExclusionId] = useState<number | string | null>(null);
+  const [excludingSyncEntryId, setExcludingSyncEntryId] = useState<number | string | null>(null);
   const [syncActivityActionFeedback, setSyncActivityActionFeedback] = useState<{
     kind: "success" | "error";
     message: string;
@@ -936,8 +940,6 @@ export function SettingsPage({
   const manualSyncTargetsLabel = syncStatus.syncTargetsLabel ?? syncProviderLabel;
   const isAniListSync = syncStatus.provider === "anilist";
   const syncTargetLabel = syncStatus.linked ? syncProviderLabel : "No linked account";
-  const aniListLinkBlocked = malLink.linked && !aniListLink.linked;
-  const malLinkBlocked = aniListLink.linked && !malLink.linked;
 
   function toggleSection(section: SettingsSectionId) {
     setOpenSection((current) => {
@@ -2519,11 +2521,18 @@ export function SettingsPage({
           </button>
         </header>
 
+        <div className="flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/55">
+          <ScopeBadge label="Account" description="Follows your Seenary account across devices" />
+          <ScopeBadge label="Portable" description="Saved on this device and included in backups" />
+          <ScopeBadge label="Desktop only" description="Applies only to this installed desktop app" />
+        </div>
+
         <div className="space-y-4">
           <div ref={rememberSectionRef("general")} className="scroll-mt-24">
             <AccordionSection
               icon={SparklesIcon}
               title="General"
+              scope="Mixed scopes"
               description="App information, startup behavior, shortcuts, and Tutorial access."
               summary={[
                 `Version ${APP_VERSION}`,
@@ -2548,6 +2557,9 @@ export function SettingsPage({
               onToggle={() => toggleSection("general")}
             >
             <div className="space-y-5">
+              <p className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-xs leading-5 text-white/55">
+                Tutorial and visual preferences are portable device settings. Analytics consent belongs to your Seenary account. Startup, window, and shortcut controls apply only to this desktop installation.
+              </p>
               <div>
                 <SectionHeading
                   icon={SparklesIcon}
@@ -2914,6 +2926,7 @@ export function SettingsPage({
             <AccordionSection
               icon={PaintBrushIcon}
               title="Appearance"
+              scope="Portable"
               description="Visual customization for the app."
               summary={[
                 accentSummary,
@@ -3537,6 +3550,7 @@ export function SettingsPage({
             <AccordionSection
               icon={EyeSlashIcon}
               title="Content"
+              scope="Portable"
               description="Control anime title display and what appears in discovery surfaces."
               summary={[
                 titleLabel,
@@ -3614,6 +3628,7 @@ export function SettingsPage({
             <AccordionSection
               icon={HomeIcon}
               title="Home"
+              scope="Portable"
               description="How the home screen behaves when you land in the app."
               summary={[
                 `Starts on ${getStartViewLabel(settings.startView)}`,
@@ -3724,6 +3739,7 @@ export function SettingsPage({
             <AccordionSection
               icon={LinkIcon}
               title="Sign-in methods"
+              scope="Account"
               description="Manage your local password and connected external accounts."
               summary={[
                 aniListLink.loading
@@ -3781,9 +3797,7 @@ export function SettingsPage({
                     <p className="mt-2 text-sm leading-6 text-white/45">
                       {aniListLink.linked
                         ? "This local account is ready for authenticated AniList operations."
-                        : aniListLinkBlocked
-                          ? "Unlink MyAnimeList first. Seenary uses one authenticated sync provider at a time."
-                        : "Authorize AniList in your browser and attach it to this local account."}
+                        : "Authorize AniList in your browser and attach it to this Seenary account."}
                     </p>
                   </div>
 
@@ -3802,9 +3816,9 @@ export function SettingsPage({
                     <button
                       type="button"
                       onClick={linkAniListAccount}
-                      disabled={aniListLink.loading || aniListLinkBlocked}
+                      disabled={aniListLink.loading}
                       className={`inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-white/55 ${
-                        aniListLink.loading || aniListLinkBlocked
+                        aniListLink.loading
                           ? "cursor-not-allowed border border-white/5 bg-white/[0.03] text-white/35"
                           : "border border-white/10 bg-white text-black hover:opacity-90"
                       }`}
@@ -3812,8 +3826,6 @@ export function SettingsPage({
                       <LinkIcon className="h-4 w-4" />
                       {aniListLink.loading
                         ? "Checking..."
-                        : aniListLinkBlocked
-                          ? "MyAnimeList is active"
                         : aniListLink.linked
                           ? "Relink AniList"
                           : "Link AniList"}
@@ -3907,9 +3919,7 @@ export function SettingsPage({
                     <p className="mt-2 text-sm leading-6 text-white/45">
                       {malLink.linked
                         ? "This local account can be matched back to your MyAnimeList profile."
-                        : malLinkBlocked
-                          ? "Unlink AniList first. Seenary uses one authenticated sync provider at a time."
-                        : "Authorize MyAnimeList in your browser and attach it to this local account."}
+                        : "Authorize MyAnimeList in your browser and attach it to this Seenary account as a fallback source."}
                     </p>
                   </div>
 
@@ -3928,9 +3938,9 @@ export function SettingsPage({
                     <button
                       type="button"
                       onClick={linkMalAccount}
-                      disabled={malLink.loading || malLinkBlocked}
+                      disabled={malLink.loading}
                       className={`inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-white/55 ${
-                        malLink.loading || malLinkBlocked
+                        malLink.loading
                           ? "cursor-not-allowed border border-white/5 bg-white/[0.03] text-white/35"
                           : "border border-white/10 bg-white text-black hover:opacity-90"
                       }`}
@@ -3938,8 +3948,6 @@ export function SettingsPage({
                       <LinkIcon className="h-4 w-4" />
                       {malLink.loading
                         ? "Checking..."
-                        : malLinkBlocked
-                          ? "AniList is active"
                         : malLink.linked
                           ? "Relink MyAnimeList"
                           : "Link MyAnimeList"}
@@ -4019,6 +4027,7 @@ export function SettingsPage({
             <AccordionSection
               icon={ArrowPathIcon}
               title={syncStatus.linked ? `${manualSyncTargetsLabel} Sync` : "External Sync"}
+              scope="Account"
               description={
                 syncStatus.linked
                   ? `Push local Anime and Manga changes to ${manualSyncTargetsLabel}.`
@@ -4165,6 +4174,7 @@ export function SettingsPage({
             <AccordionSection
               icon={CloudArrowDownIcon}
               title="Import & Data"
+              scope="Account and portable"
               description="Bring anime data into the app and manage local list data."
               summary={["Portable backups", "AniList import", "Clear lists"]}
               open={openSection === "data"}
@@ -4179,6 +4189,25 @@ export function SettingsPage({
                 </p>
 
                 <div className="mt-5 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    disabled={isExportingAccountData}
+                    onClick={async () => {
+                      try {
+                        setIsExportingAccountData(true);
+                        setBackupFeedback(null);
+                        await onExportAccountData();
+                        setBackupFeedback({ kind: "success", message: "Account data exported." });
+                      } catch (error) {
+                        setBackupFeedback({ kind: "error", message: error instanceof Error ? error.message : "Failed to export account data." });
+                      } finally {
+                        setIsExportingAccountData(false);
+                      }
+                    }}
+                    className="rounded-2xl border border-cyan-200/25 bg-cyan-200/10 px-5 py-3 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-200/15 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {isExportingAccountData ? "Exporting account..." : "Export account data"}
+                  </button>
                   <button
                     type="button"
                     disabled={isExportingBackup}
@@ -4649,9 +4678,10 @@ export function SettingsPage({
                   <div className="border-t border-rose-300/15 pt-5">
                     <p className="font-semibold text-white">Delete account</p>
                     <p className="mt-2 text-sm leading-6 text-white/70">
-                      Permanently removes this Seenary profile, both local media lists, sync history,
-                      linked-service credentials, sessions, and saved layout configuration. Your AniList
-                      and MyAnimeList accounts and their lists are not deleted.
+                      Permanently removes this Seenary profile, its cloud Anime and Manga library,
+                      sync history, linked-service credentials, sessions, and account settings. Your AniList
+                      and MyAnimeList accounts and their lists are not deleted. General preferences for this
+                      installation remain available for another account and can be reset separately.
                     </p>
 
                     {!isDeleteAccountArmed ? (
@@ -4660,6 +4690,7 @@ export function SettingsPage({
                         onClick={() => {
                           setDeleteAccountFeedback(null);
                           setDeleteAccountConfirmation("");
+                          setDeleteAccountPassword("");
                           setIsDeleteAccountArmed(true);
                         }}
                         className="mt-4 rounded-2xl border border-rose-300/30 bg-rose-600/30 px-4 py-2.5 text-sm font-semibold text-rose-50 transition hover:bg-rose-600/40"
@@ -4681,15 +4712,28 @@ export function SettingsPage({
                           className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-rose-300/45 focus:ring-2 focus:ring-rose-300/15"
                           placeholder={username}
                         />
+                        <label className="mt-4 block text-sm font-semibold text-rose-50" htmlFor="delete-account-password">
+                          Confirm your Seenary password
+                        </label>
+                        <input
+                          id="delete-account-password"
+                          type="password"
+                          value={deleteAccountPassword}
+                          disabled={isDeletingAccount}
+                          onChange={(event) => setDeleteAccountPassword(event.target.value)}
+                          autoComplete="current-password"
+                          className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-rose-300/45 focus:ring-2 focus:ring-rose-300/15"
+                          placeholder="Seenary password"
+                        />
                         <div className="mt-4 flex flex-wrap gap-3">
                           <button
                             type="button"
-                            disabled={isDeletingAccount || deleteAccountConfirmation !== username}
+                            disabled={isDeletingAccount || deleteAccountConfirmation !== username || !deleteAccountPassword}
                             onClick={async () => {
                               setIsDeletingAccount(true);
                               setDeleteAccountFeedback(null);
                               try {
-                                const result = await onDeleteAccount(deleteAccountConfirmation);
+                                const result = await onDeleteAccount(deleteAccountConfirmation, deleteAccountPassword);
                                 if (!result.ok) setDeleteAccountFeedback(result.message);
                               } catch (error) {
                                 setDeleteAccountFeedback(
@@ -4711,6 +4755,7 @@ export function SettingsPage({
                             onClick={() => {
                               setIsDeleteAccountArmed(false);
                               setDeleteAccountConfirmation("");
+                              setDeleteAccountPassword("");
                               setDeleteAccountFeedback(null);
                             }}
                             className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-white/70 transition hover:bg-white/8 hover:text-white"
@@ -5247,6 +5292,7 @@ export function SettingsPage({
 function AccordionSection({
   icon: Icon,
   title,
+  scope,
   description,
   summary,
   open,
@@ -5255,6 +5301,7 @@ function AccordionSection({
 }: {
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   title: string;
+  scope: string;
   description: string;
   summary: string[];
   open: boolean;
@@ -5280,6 +5327,9 @@ function AccordionSection({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-lg font-semibold text-white">{title}</h2>
+              <span className="rounded-full border border-cyan-200/15 bg-cyan-200/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-50/65">
+                {scope}
+              </span>
               {summary.map((item) => (
                 <span
                   key={`${title}-${item}`}
@@ -5319,6 +5369,14 @@ function AccordionSection({
         </div>
       </div>
     </section>
+  );
+}
+
+function ScopeBadge({ label, description }: { label: string; description: string }) {
+  return (
+    <span title={description} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 normal-case tracking-normal text-white/60">
+      <strong className="text-white/80">{label}:</strong> {description}
+    </span>
   );
 }
 
@@ -5699,9 +5757,9 @@ function SyncActivityModal({
   titleLanguage: TitleLanguage;
   onClose: () => void;
   onChangeTab: (tab: SyncActivityTab) => void;
-  restoringId: number | null;
+  restoringId: number | string | null;
   onRestore: (item: SyncActivityItem) => void;
-  excludingId: number | null;
+  excludingId: number | string | null;
   onExclude: (item: SyncActivityItem) => void;
   actionFeedback: { kind: "success" | "error"; message: string } | null;
 }) {

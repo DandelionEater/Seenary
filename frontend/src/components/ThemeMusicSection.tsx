@@ -75,6 +75,12 @@ export function ThemeMusicSection({ items, loading }: ThemeMusicSectionProps) {
         )}
       </div>
 
+      {items.some((item) => item.cache?.stale) && (
+        <p role="status" className="mb-3 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
+          AnimeThemes is unavailable. Showing theme information saved by Seenary.
+        </p>
+      )}
+
       {loading ? (
         <div className="flex items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.025] px-4 py-5 text-sm text-white/40">
           <ArrowPathIcon className="h-4 w-4 animate-spin" />

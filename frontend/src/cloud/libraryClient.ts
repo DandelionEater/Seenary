@@ -16,7 +16,7 @@ export type State = {
 };
 export type Reply = { ok?: boolean; code?: string; message?: string; authenticated?: boolean; user?: { id: string; username: string }; entry?: Entry | null; current?: Entry | null; entries?: Entry[]; changes?: { entry: Entry }[]; nextCursor?: string; changeCursor?: string; hasMore?: boolean; media?: Media | Media[] };
 export type Rpc = (method: string, args: unknown[], userId: string) => Promise<Reply>;
-export type Storage = { read(key: string): Promise<State | undefined>; write(key: string, state: State): Promise<void> };
+export type Storage = { read(key: string): Promise<State | undefined>; write(key: string, state: State): Promise<void>; remove?(key: string): Promise<void> };
 export const emptyState = (): State => ({ entries: {}, media: {}, pending: [], candidates: [] });
 export const defaults: Fields = { status: 'planned', isFavorite: false, progress: 0, volumeProgress: 0, score: null, notes: null, startedAt: null, completedAt: null, repeatCount: 0, isRepeating: false };
 export const fields = (entry: Partial<Fields>): Partial<Fields> => Object.fromEntries(Object.keys(defaults).filter(key => key in entry).map(key => [key, entry[key as keyof Fields]]));

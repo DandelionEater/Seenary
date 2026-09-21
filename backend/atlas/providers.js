@@ -92,10 +92,7 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
               authVersion: 0, schemaVersion: 1, lifecycleRevision: 0, created_at: now, updated_at: now, last_login_at: now };
             await repo.users.insertOne(user, { session });
           }
-          const current = await repo.providerAccounts.findOne({ userId: user._id }, { session });
-          if (current && (current.provider !== provider || current.providerUserId !== String(viewer.id))) {
-            return fail('Unlink the current provider before linking a different account.');
-          }
+          const current = await repo.providerAccounts.findOne({ userId: user._id, provider }, { session });
           const now = new Date();
           const link = { _id: current?._id || crypto.randomUUID(), userId: user._id, provider, providerUserId: String(viewer.id),
             username: viewer.name, originalUsername: current?.originalUsername || viewer.name, ...fields,
@@ -114,9 +111,11 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
       return { ok: true, user: safeUser(result.user), account: result.account,
         ...(flow.mode === 'login' ? { token: await accounts.issueSession(result.user) } : {}) };
     },
-    async getLink(token) {
+    async getLink(token, provider) {
       const user = await accounts.getAuthenticatedUser(token);
-      return user ? { ok: true, account: publicLink(await repo.providerAccounts.findOne({ userId: user._id })) } : fail('You must be logged in.');
+      if (!user) return fail('You must be logged in.');
+      if (provider !== undefined && !validProvider(provider)) return fail('Invalid provider.');
+      return { ok: true, account: publicLink(await repo.providerAccounts.findOne({ userId: user._id, ...(provider ? { provider } : {}) })) };
     },
     async setLocalPassword(token, password) {
       if (typeof password !== 'string' || password.length < 8 || password.length > 128) return fail('Password must contain 8–128 characters.');
@@ -127,16 +126,16 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
         return { ok: true, message: 'Password set. Sign in again.' };
       });
     },
-    async unlink(token, password) {
+    async unlink(token, provider, password) {
       const user = await accounts.getAuthenticatedUser(token);
-      if (!user || typeof password !== 'string' || password.length > 128 || !password
+      if (!validProvider(provider) || !user || typeof password !== 'string' || password.length > 128 || !password
           || !await argon2.verify(user.password_hash, password)) return fail('Confirm your Seenary password before unlinking.');
       return authenticatedWrite(token, async (current, session) => {
         if (current.authVersion !== user.authVersion) return fail('Account changed; sign in again.');
-        const link = await repo.providerAccounts.findOne({ userId: user._id }, { session });
+        const link = await repo.providerAccounts.findOne({ userId: user._id, provider }, { session });
         if (link) await repo.providerAccounts.deleteOne({ _id: link._id }, { session });
-        await repo.oauthFlows.deleteMany({ userId: user._id }, { session });
-        await cancelWork(user._id, session, link?.provider);
+        await repo.oauthFlows.deleteMany({ userId: user._id, provider }, { session });
+        await cancelWork(user._id, session, provider);
         await repo.users.updateOne({ _id: user._id }, { $inc: { authVersion: 1 }, $set: { local_credentials_confirmed: true } }, { session });
         return { ok: true, message: 'Provider unlinked. Sign in again.' };
       });
@@ -147,7 +146,9 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
       if (patch === undefined) {
         const stored = await repo.accountSettings.findOne({ _id: user._id });
         return { ok: true, settings: { autoSyncEnabled: stored?.autoSyncEnabled ?? false,
-          needsDeviceReconciliation: stored?.needsDeviceReconciliation ?? true } };
+          needsDeviceReconciliation: stored?.needsDeviceReconciliation ?? true,
+          analyticsConsentDecided: stored?.analyticsConsentDecided === true,
+          analyticsEnabled: stored?.analyticsEnabled === true } };
       }
       if (!patch || typeof patch !== 'object' || Object.keys(patch).length !== 1 || typeof patch.autoSyncEnabled !== 'boolean') return fail('Invalid account settings.');
       return authenticatedWrite(token, async (current, session) => {
@@ -189,6 +190,43 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
         counts: state.lastCounts || null,
       } : null };
     },
+    async syncActivity(token) {
+      const user = await accounts.getAuthenticatedUser(token);
+      if (!user) return fail('You must be logged in.');
+      const jobs = await repo.jobs.find({ userId: user._id, kind: 'provider-library' }).sort({ createdAt: -1 }).limit(200).toArray();
+      const mediaIds = [...new Set(jobs.map(job => job.mediaId))];
+      const mediaRows = mediaIds.length ? await repo.media.find({ _id: { $in: mediaIds } }).toArray() : [];
+      const mediaById = new Map(mediaRows.map(item => [item._id, item]));
+      const rows = jobs.map(job => {
+        const media = mediaById.get(job.mediaId); const providerId = media?.[job.provider === 'anilist' ? 'anilistId' : 'malId'];
+        return { id: job._id, provider: job.provider, operation: job.operation, status: job.status, attempts: job.attempts || 0,
+          media_type: job.mediaType, ...(job.mediaType === 'MANGA' ? { manga_id: providerId } : { anime_id: providerId }),
+          animeTitle: media?.metadata?.title_preferred || media?.metadata?.title_english || media?.metadata?.title_romaji || null,
+          last_error: job.lastError || null, next_attempt_at: job.nextAttemptAt || null, created_at: job.createdAt, updated_at: job.updatedAt || null };
+      });
+      const selected = (...statuses) => rows.filter(row => statuses.includes(row.status));
+      const refreshes = await repo.providerRefreshStates.find({ userId: user._id }).toArray();
+      const pulled = refreshes.filter(item => item.lastSuccessAt).map(item => ({ id: item._id, provider: item.provider,
+        operation: `pull-${item.provider}`, status: item.lastOutcome || 'completed', created_at: item.lastSuccessAt,
+        updated_at: item.lastSuccessAt, message: item.lastCounts ? JSON.stringify(item.lastCounts) : null }));
+      return { ok: true, pending: selected('pending', 'retry', 'queued', 'running', 'blocked_mapping'), completed: selected('succeeded'),
+        failed: selected('failed', 'reauthorization_required'), excluded: selected('excluded'), pulled };
+    },
+    async setSyncExclusion(token, jobId, excluded) {
+      const user = await accounts.getAuthenticatedUser(token);
+      if (!user) return fail('You must be logged in.');
+      if (typeof jobId !== 'string' || !jobId) return fail('Invalid sync entry.');
+      const job = await repo.jobs.findOne({ _id: jobId, userId: user._id, kind: 'provider-library' });
+      if (!job) return fail('Sync entry was not found.');
+      if (excluded) {
+        if (!['pending', 'retry', 'queued', 'blocked_mapping', 'failed'].includes(job.status)) return fail('Only unfinished sync entries can be excluded.');
+        await repo.jobs.updateOne({ _id: jobId, userId: user._id }, { $set: { status: 'excluded', updatedAt: new Date() }, $unset: { leaseOwner: '', leaseUntil: '', nextAttemptAt: '' } });
+        return { ok: true, message: 'This provider update was excluded.' };
+      }
+      if (job.status !== 'excluded') return fail('This sync entry is not excluded.');
+      await repo.jobs.updateOne({ _id: jobId, userId: user._id }, { $set: { status: job.providerMediaId ? 'pending' : 'blocked_mapping', attempts: 0, updatedAt: new Date() }, $unset: { lastError: '', nextAttemptAt: '' } });
+      return { ok: true, message: 'This provider update was restored to the queue.' };
+    },
     async deleteAccount(token, username, password) {
       const user = await accounts.getAuthenticatedUser(token);
       if (!user || username !== user.username || typeof password !== 'string' || !password || password.length > 128
@@ -203,7 +241,7 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
           username_normalized: anonymized, password_hash: '', local_credentials_confirmed: null, tutorial_dismissed: false,
           last_login_at: null, updated_at: new Date(), deletedAt: new Date(), ...(migrationBlockHash ? { migrationBlockHash } : {}) },
           $unset: { sourceFingerprint: '', legacy: '', legacyKey: '' }, $inc: { authVersion: 1 } }, { session });
-        return { ok: true, message: 'Staging account deleted. Its migration identity is retained to prevent re-import.' };
+        return { ok: true, message: 'Account deleted.' };
       });
     },
     async refresh(token) {

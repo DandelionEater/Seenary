@@ -982,7 +982,14 @@ export function installApiClient() {
     unlinkMalAccount: (password) => rpc("unlinkMalAccount", [password]),
     setLocalPassword: (password) => rpc("setLocalPassword", [password]),
     logout,
-    deleteAccount: async (usernameConfirmation) => {
+    exportAccountData: async () => {
+      const userId = await requireActiveUserId();
+      const session = await getSession();
+      const backup = await localStore.exportBackup(userId, session?.user?.username ?? "Seenary user");
+      return { ok: true, export: { format: "seenary.account-export", version: 1, exportedAt: new Date().toISOString(), data: { portableBackup: backup } } };
+    },
+    deleteAccount: async (usernameConfirmation, password) => {
+      void password; // The legacy SQLite account API predates password-confirmed deletion.
       const userId = await requireActiveUserId();
       const result = await rpc("deleteAccount", [usernameConfirmation]);
       if (result.ok) {
@@ -1054,6 +1061,10 @@ export function installApiClient() {
       }
       return result;
     },
+    resolveMyListConflict: async () => ({
+      ok: false,
+      message: "Cloud conflict resolution is only available with Atlas.",
+    }),
     getMyMangaList: async () => {
       const userId = await requireActiveUserId();
       return { ok: true, entries: await localStore.getMangaList(userId) };
@@ -1078,6 +1089,10 @@ export function installApiClient() {
       }
       return result;
     },
+    resolveMyMangaListConflict: async () => ({
+      ok: false,
+      message: "Cloud conflict resolution is only available with Atlas.",
+    }),
     clearMyList: async (options: { queueProviderDeletion?: boolean } = {}) => {
       const userId = await requireActiveUserId();
       const result = await localStore.clearList(userId, options);

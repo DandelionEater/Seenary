@@ -1,5 +1,22 @@
 import assert from 'node:assert/strict';
 import { LibraryClient, defaults, emptyState, parseBackup } from '../src/cloud/libraryClient.ts';
+import { resolveLibraryHydration } from '../src/utils/libraryHydration.ts';
+import { inspectSeenaryBackup, selectBackupSections } from '../src/utils/portablePreferences.ts';
+
+const retainedHydration = resolveLibraryHydration(
+  { status: 'rejected', reason: new Error('Temporary API restart') },
+  { status: 'fulfilled', value: { ok: true, entries: [{ manga_id: 2 }] } },
+);
+assert.equal(retainedHydration.animeEntries, undefined, 'a failed refresh preserves the visible anime list');
+assert.deepEqual(retainedHydration.mangaEntries, [{ manga_id: 2 }], 'a successful list refresh still applies');
+assert.equal(retainedHydration.failed, true);
+
+const emptyHydration = resolveLibraryHydration(
+  { status: 'fulfilled', value: { ok: true } },
+  { status: 'fulfilled', value: { ok: true, entries: [] } },
+);
+assert.deepEqual(emptyHydration.animeEntries, [], 'a confirmed empty cloud list may clear visible entries');
+assert.equal(emptyHydration.failed, false);
 
 const saved = new Map();
 let failWrite = false;
@@ -106,6 +123,12 @@ const restoredBackup = parseBackup({ format: 'seenary.cloud-backup', version: 1,
 assert(restoredBackup.some(item => item.patch.notes === 'unreviewed device note'), 'backup restore retains a device alternative to an existing cloud entry');
 assert.throws(() => parseBackup({ ...backup, data: { entries: { 1: { anime_id: 1, is_favorite: 'false' } } } }, 'alice'), /Invalid flag/);
 assert.throws(() => parseBackup({ format: 'seenary.cloud-backup', version: 1, userId: 'bob', state: {} }, 'alice'), /another account/);
+const cloudBackup = { format: 'seenary.cloud-backup', version: 1, userId: 'alice', state: restoreState, data: { portablePreferences: { version: 1 } } };
+const cloudInspection = inspectSeenaryBackup(cloudBackup);
+assert.equal(cloudInspection.valid, true, 'the normal cloud export is accepted by the restore picker');
+assert.equal(cloudInspection.animeEntries > 0, true);
+assert.equal('data' in selectBackupSections(cloudBackup, { restoreLibrary: true, restorePreferences: false }), false);
+assert.equal('state' in selectBackupSections(cloudBackup, { restoreLibrary: false, restorePreferences: true }), false);
 
 const before = await client.read();
 let page = 0;

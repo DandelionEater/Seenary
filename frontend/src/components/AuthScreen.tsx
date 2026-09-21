@@ -1,5 +1,14 @@
 import { useState } from "react";
 
+function errorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) {
+    if (error.name === "AbortError" || error.name === "TimeoutError") return "The request timed out. Check your connection and try again.";
+    if (/failed to fetch|networkerror/i.test(error.message)) return "Seenary could not reach the cloud. Check your connection and try again.";
+    if (error.message) return error.message;
+  }
+  return fallback;
+}
+
 type AuthScreenProps = {
   onAuthenticated: (user: {
     id: number;
@@ -21,8 +30,6 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [oauthProfile, setOauthProfile] = useState<{
     provider: "AniList" | "MyAnimeList";
-    id: number;
-    username: string;
   } | null>(null);
   const [localUsername, setLocalUsername] = useState("");
   const [username, setUsername] = useState("");
@@ -62,8 +69,8 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
         username: result.user.username,
         tutorial_dismissed: result.user.tutorial_dismissed,
       });
-    } catch {
-      setMessage("Something went wrong.");
+    } catch (error) {
+      setMessage(errorMessage(error, mode === "login" ? "Login failed. Try again." : "Account creation failed. Try again."));
       setPassword("");
     } finally {
       setBusy(false);
@@ -81,80 +88,18 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
     await submit();
   };
 
-  const startAniListLogin = async () => {
+  const startAniListLogin = () => {
     if (busy) return;
-
-    setBusy(true);
-    setMessage("Opening AniList in your browser...");
-
-    try {
-      const result = await window.api.startAniListLogin();
-
-      if (!result.ok) {
-        setMessage(result.message);
-        return;
-      }
-
-      if (result.needsProfile && result.anilist) {
-        setOauthProfile({ provider: "AniList", ...result.anilist });
-        setLocalUsername(result.suggestedUsername || result.anilist.username);
-        setMessage("");
-        return;
-      }
-
-      if (!result.user) {
-        setMessage("AniList login finished, but no local account was returned.");
-        return;
-      }
-
-      await onAuthenticated({
-        id: result.user.id,
-        username: result.user.username,
-        tutorial_dismissed: result.user.tutorial_dismissed,
-      });
-    } catch {
-      setMessage("AniList login failed.");
-    } finally {
-      setBusy(false);
-    }
+    setOauthProfile({ provider: "AniList" });
+    setLocalUsername(/^[a-zA-Z0-9_]{3,20}$/.test(username.trim()) ? username.trim() : "");
+    setMessage("");
   };
 
-  const startMalLogin = async () => {
+  const startMalLogin = () => {
     if (busy) return;
-
-    setBusy(true);
-    setMessage("Opening MyAnimeList in your browser...");
-
-    try {
-      const result = await window.api.startMalLogin();
-
-      if (!result.ok) {
-        setMessage(result.message);
-        return;
-      }
-
-      if (result.needsProfile && result.mal) {
-        setOauthProfile({ provider: "MyAnimeList", ...result.mal });
-        setLocalUsername(result.suggestedUsername || result.mal.username);
-        setMessage("");
-        return;
-      }
-
-      if (!result.user) {
-        setMessage("MyAnimeList login finished, but no local account was returned.");
-        return;
-      }
-
-      await onAuthenticated({
-        id: result.user.id,
-        username: result.user.username,
-        tutorial_dismissed: result.user.tutorial_dismissed,
-      });
-    } catch {
-      setMessage("MyAnimeList login failed.");
-    } finally {
-      setBusy(false);
-    }
+    setOauthProfile({ provider: "MyAnimeList" });
+    setLocalUsername(/^[a-zA-Z0-9_]{3,20}$/.test(username.trim()) ? username.trim() : "");
+    setMessage("");
   };
 
   const completeOauthSignup = async () => {
@@ -168,7 +113,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
     }
 
     setBusy(true);
-    setMessage("Creating your local account...");
+    setMessage(`Waiting for ${oauthProfile?.provider || "provider"} authorization...`);
 
     try {
       const result =
@@ -186,8 +131,8 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
         username: result.user.username,
         tutorial_dismissed: result.user.tutorial_dismissed,
       });
-    } catch {
-      setMessage(`Failed to finish ${oauthProfile?.provider || "OAuth"} login.`);
+    } catch (error) {
+      setMessage(errorMessage(error, `Failed to finish ${oauthProfile?.provider || "provider"} login. Try again.`));
     } finally {
       setBusy(false);
     }
@@ -213,7 +158,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
         <p className="mt-3 text-sm text-white/55">
           {oauthProfile
-            ? `Connected to ${oauthProfile.provider} as ${oauthProfile.username}.`
+            ? `Choose your Seenary username, then authorize with ${oauthProfile.provider}. Existing accounts keep their current Seenary username.`
             : mode === "login"
               ? "Log in to access your personal Anime and Manga library."
               : "Create your account to start building your Anime and Manga library."}
@@ -269,7 +214,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
               <LoadingSpinner />
               <span>
                 {oauthProfile
-                  ? "Creating account..."
+                  ? "Waiting for authorization..."
                   : mode === "login"
                     ? "Logging in..."
                     : "Creating account..."}
@@ -278,7 +223,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           ) : (
             <span>
               {oauthProfile
-                ? `Finish with ${oauthProfile.provider}`
+                ? `Continue with ${oauthProfile.provider}`
                 : mode === "login"
                   ? "Log in"
                   : "Create account"}

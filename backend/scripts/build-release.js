@@ -25,7 +25,13 @@ function run(command, args, options = {}) {
   }
 }
 
-run(npmCommand, ['run', 'build:frontend']);
+run(npmCommand, ['run', 'build:frontend'], {
+  env: {
+    ...process.env,
+    VITE_ATLAS_PRODUCTION: 'true',
+    VITE_API_BASE_URL: 'https://api.seenary.app',
+  },
+});
 run(process.execPath, ['scripts/build-custom-uninstaller.js'], { shell: false });
 run(builderCommand, [
   '--win',

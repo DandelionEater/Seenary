@@ -8,11 +8,12 @@ const releaseDir = path.resolve(backendDir, '..', 'release', packageJson.version
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const builderCommand = process.platform === 'win32' ? 'electron-builder.cmd' : 'electron-builder';
 
-function run(command, args) {
+function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: backendDir,
     stdio: 'inherit',
     shell: process.platform === 'win32',
+    ...options,
   });
 
   if (result.error) {
@@ -24,7 +25,13 @@ function run(command, args) {
   }
 }
 
-run(npmCommand, ['run', 'build:frontend']);
+run(npmCommand, ['run', 'build:frontend'], {
+  env: {
+    ...process.env,
+    VITE_ATLAS_PRODUCTION: 'true',
+    VITE_API_BASE_URL: 'https://api.seenary.app',
+  },
+});
 const linuxTargets = process.platform === 'linux' ? ['dir', 'AppImage', 'flatpak'] : ['dir'];
 
 if (process.platform !== 'linux') {

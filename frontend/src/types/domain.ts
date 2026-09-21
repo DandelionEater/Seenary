@@ -83,6 +83,7 @@ type PersonDate = {
 };
 
 export type PersonDetails = Person & {
+  warning?: string | null;
   description?: string | null;
   dateOfBirth?: PersonDate | null;
   dateOfDeath?: PersonDate | null;
@@ -213,9 +214,10 @@ export type ArtistSearchResult = SongSearchResult & {
   creditedAs?: string | null;
 };
 
-export type AnimeThemeMusicItem = Omit<SongSearchResult, "media">;
+export type AnimeThemeMusicItem = Omit<SongSearchResult, "media"> & { cache?: { stale?: boolean } };
 
 export type ArtistCatalogResult = {
+  warning?: string;
   artist: ArtistSearchResult["artist"];
   items: ArtistSearchResult[];
   pageInfo: {
@@ -225,6 +227,7 @@ export type ArtistCatalogResult = {
 };
 
 export type StudioCatalogResult = {
+  warning?: string;
   studio: {
     id: number;
     name: string;

@@ -120,13 +120,14 @@ function createLibraryService({ client, repo, accounts, media }) {
           const syncChanged = !current || current.deleted !== deleted || SYNC_FIELDS.some((key) => current[key] !== fields[key]);
           const policy = await repo.accountSettings.findOne({ _id: user._id }, { session });
           if (syncChanged && policy?.autoSyncEnabled === true) {
-            const link = await repo.providerAccounts.findOne({ userId: user._id }, { session });
-            if (link) {
+            const links = await repo.providerAccounts.find({ userId: user._id }, { session }).toArray();
+            for (const link of links) {
               const providerMediaId = canonical[link.provider === 'anilist' ? 'anilistId' : 'malId'] ?? null;
-              providerSync = providerMediaId ? 'pending' : 'blocked_mapping';
+              const linkStatus = providerMediaId ? 'pending' : 'blocked_mapping';
+              providerSync = providerSync === 'not_queued' ? linkStatus : providerSync === linkStatus ? providerSync : 'mixed';
               await repo.jobs.insertOne({ _id: crypto.randomUUID(), kind: 'provider-library', userId: user._id, mediaId: canonical._id,
                 provider: link.provider, providerLinkId: link._id, providerLinkRevision: link.revision, providerMediaId,
-                libraryRevision: entry.revision, operation: deleted ? 'delete' : 'upsert', status: providerSync,
+                libraryRevision: entry.revision, operation: deleted ? 'delete' : 'upsert', status: linkStatus,
                 payload: Object.fromEntries(SYNC_FIELDS.map((key) => [key, entry[key]])), mediaType: entry.type, createdAt: now }, { session });
             }
           }

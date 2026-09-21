@@ -52,7 +52,8 @@ async function main() {
     assert.equal((await providers.complete('anilist', state, '101', binding)).ok, true);
     assert.equal((await providers.complete('anilist', state, '101', binding)).ok, false, 'one-use state');
     assert.equal((await authorize('anilist', 'link', bob.token, 101)).ok, false, 'cross-account takeover rejected');
-    assert.equal((await authorize('mal', 'link', alice.token, 102)).ok, false, 'single provider policy');
+    assert.equal((await authorize('mal', 'link', alice.token, 102)).ok, true, 'AniList and MAL may be linked together');
+    assert.equal(await repo.providerAccounts.countDocuments({ userId: alice.user.id }), 2);
     const login = await authorize('anilist', 'login', null, 101);
     assert.equal(login.user.id, alice.user.id, 'provider login returns mapped owner');
     assert.equal((await accounts.getSession(login.token)).authenticated, true);
@@ -78,7 +79,7 @@ async function main() {
     const newUser = await authorize('mal', 'login', null, 303, 'ProviderOnly');
     assert.equal(newUser.ok, true);
     assert.equal(newUser.user.local_credentials_confirmed, false);
-    assert.equal((await providers.unlink(newUser.token, 'anything')).ok, false);
+    assert.equal((await providers.unlink(newUser.token, 'mal', 'anything')).ok, false);
     assert.equal((await providers.setLocalPassword(newUser.token, 'new-local-password')).ok, true);
     assert.equal((await accounts.getSession(newUser.token)).authenticated, false);
     assert.equal((await accounts.login('ProviderOnly', 'new-local-password')).ok, true);
@@ -95,7 +96,7 @@ async function main() {
     assert.equal(refreshCalls, refreshBefore + 1);
     assert.equal((await providers.refresh(bob.token)).ok, false, 'shared refresh lease');
     await repo.jobs.insertOne({ userId: bob.user.id, provider: 'mal', status: 'pending' });
-    assert.equal((await providers.unlink(bob.token, 'bob-password')).ok, true);
+    assert.equal((await providers.unlink(bob.token, 'mal', 'bob-password')).ok, true);
     release(); pendingRefresh = null;
     assert.equal((await inFlight).ok, false, 'refresh cannot restore unlinked credentials');
     assert.equal(await repo.providerAccounts.countDocuments({ userId: bob.user.id }), 0);
@@ -120,7 +121,7 @@ async function main() {
     assert.equal((await importProviderData({ ...options, verify: true })).verified, 2);
     assert.equal((await importProviderData({ ...options, apply: true })).unchanged, 2);
     assert.deepEqual(fs.readFileSync(filename), before);
-    assert.equal((await providers.unlink(legacy.token, 'legacy-password')).ok, true);
+    assert.equal((await providers.unlink(legacy.token, 'mal', 'legacy-password')).ok, true);
     assert.equal((await importProviderData({ ...options, apply: true })).unchanged, 2);
     assert.equal(await repo.providerAccounts.countDocuments({ userId: legacy.user.id }), 0, 'rerun cannot restore unlinked tokens');
     const legacyLogin = await accounts.login('LegacyProvider', 'legacy-password');
@@ -152,6 +153,16 @@ async function main() {
     const httpCookie = callback.headers.get('set-cookie').split(';')[0];
     assert.equal((await (await rpc('getProviderAccount', [], httpCookie)).json()).account.provider, 'anilist');
     assert.equal((await (await rpc('getProviderAccount', [])).json()).ok, false);
+    const popupStart = await fetch(base + '/auth/mal/start?username=HttpPopup', { redirect: 'manual', headers: { Accept: 'text/html' } });
+    assert.equal(popupStart.status, 302);
+    const popupBinding = popupStart.headers.get('set-cookie').split(';')[0];
+    const popupState = new URL(popupStart.headers.get('location')).searchParams.get('state');
+    const popupCallback = await fetch(base + `/auth/mal/callback?state=${popupState}&code=708`, { headers: { Cookie: popupBinding, Accept: 'text/html' } });
+    const popupHtml = await popupCallback.text();
+    assert.match(popupCallback.headers.get('content-type'), /^text\/html/);
+    assert.match(popupHtml, /seenary:provider-auth-complete/);
+    assert.match(popupHtml, /HttpPopup/);
+    assert.doesNotMatch(popupHtml, /accessToken|refreshToken|"token"/);
     const requests = [];
     const realAdapters = createProviderAdapters({ ANILIST_CLIENT_ID: 'test', ANILIST_CLIENT_SECRET: 'fake-secret', MAL_CLIENT_ID: 'test',
       ATLAS_ANILIST_REDIRECT_URI: base + '/auth/anilist/callback', ATLAS_MAL_REDIRECT_URI: base + '/auth/mal/callback' }, async (url, options) => {

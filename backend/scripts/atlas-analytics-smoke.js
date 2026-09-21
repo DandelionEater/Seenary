@@ -22,6 +22,8 @@ async function main() {
     assert.equal((await analytics.record(alice.token, { platform: 'win32', appVersion: '0.1.12-beta', userId: bob.user.id })).consentRequired, true);
     assert.equal(await repo.analyticsDaily.countDocuments({}), 0);
     assert.equal((await analytics.consent(alice.token, true)).enabled, true);
+    const consentSettings = await providerServiceSettings(repo, accounts, connection.client, alice.token);
+    assert.equal(consentSettings.analyticsConsentDecided, true); assert.equal(consentSettings.analyticsEnabled, true);
     assert.equal((await analytics.record(alice.token, { platform: 'win32', appVersion: '0.1.12-beta', userId: bob.user.id })).recorded, true);
     assert.equal((await analytics.record(alice.token, { platform: 'linux', appVersion: 'changed' })).duplicate, true);
     assert.equal((await analytics.record(bob.token, { platform: 'linux', appVersion: '0.1.12-beta' })).consentRequired, true);
@@ -56,3 +58,9 @@ async function main() {
 }
 if (require.main === module) main().catch(error => { reportError(error); process.exitCode = 1; });
 module.exports = { main };
+
+async function providerServiceSettings(repo, accounts, client, token) {
+  const providers = createProviderService({ client, repo, accounts,
+    cipher: createTokenCipher(Buffer.alloc(32, 9).toString('base64')), adapters: {} });
+  return (await providers.settings(token)).settings;
+}

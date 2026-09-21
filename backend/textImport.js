@@ -1,7 +1,4 @@
 const anilist = require('./anilist');
-const { mapAnimeForDb } = require('./animeMapper');
-const { saveAnimeSummary, saveManga } = require('./db');
-const { saveMyAnimeEntry, saveMyMangaEntry } = require('./lists');
 const zlib = require('zlib');
 
 const MAX_TEXT_IMPORT_LINES = 100;
@@ -660,6 +657,11 @@ async function delayBetweenTextImportSearchBatches(index, total) {
 }
 
 function importTextEntries(currentSession, entries = [], selectedMediaKeys = []) {
+  // Atlas uses the preview parser without a SQLite runtime. Load the legacy
+  // database modules only when the legacy desktop/server import is executed.
+  const { mapAnimeForDb } = require('./animeMapper');
+  const { saveAnimeSummary, saveManga } = require('./db');
+  const { saveMyAnimeEntry, saveMyMangaEntry } = require('./lists');
   const selectedKeys = new Set(
     (Array.isArray(selectedMediaKeys) ? selectedMediaKeys : []).map((value) =>
       typeof value === 'number' ? `ANIME:${value}` : String(value)

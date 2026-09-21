@@ -99,8 +99,13 @@ export function inspectSeenaryBackup(value: unknown): BackupInspection {
     ? backup.data as Record<string, unknown>
     : null;
   const version = Number(backup.version ?? 1);
-  const valid = backup.format === "seenary.local-backup" && Boolean(data) &&
+  const cloudState = backup.state && typeof backup.state === "object" && !Array.isArray(backup.state)
+    ? backup.state as Record<string, unknown>
+    : null;
+  const isLocal = backup.format === "seenary.local-backup" && Boolean(data) &&
     Number.isInteger(version) && version >= 1 && version <= 4;
+  const isCloud = backup.format === "seenary.cloud-backup" && version === 1 && Boolean(cloudState);
+  const valid = isLocal || isCloud;
   const entryCount = (candidate: unknown) =>
     candidate && typeof candidate === "object" && !Array.isArray(candidate)
       ? Object.keys(candidate).length
@@ -109,7 +114,9 @@ export function inspectSeenaryBackup(value: unknown): BackupInspection {
   return {
     valid,
     message: valid
-      ? version < 4
+      ? isCloud
+        ? "Seenary cloud backup is ready to restore. Library choices can be resumed after closing this screen."
+        : version < 4
         ? `Seenary backup v${version} will be migrated to v4 during import.`
         : "Seenary backup v4 is ready to import."
       : version > 4
@@ -118,8 +125,12 @@ export function inspectSeenaryBackup(value: unknown): BackupInspection {
     version,
     exportedAt: typeof backup.exportedAt === "string" ? backup.exportedAt : null,
     username: typeof backup.username === "string" ? backup.username : null,
-    animeEntries: entryCount(data?.entries),
-    mangaEntries: entryCount(data?.mangaEntries),
+    animeEntries: isCloud
+      ? Object.values((cloudState?.entries as Record<string, { type?: string }> | undefined) ?? {}).filter((entry) => entry?.type === "ANIME").length
+      : entryCount(data?.entries),
+    mangaEntries: isCloud
+      ? Object.values((cloudState?.entries as Record<string, { type?: string }> | undefined) ?? {}).filter((entry) => entry?.type === "MANGA").length
+      : entryCount(data?.mangaEntries),
     hasPortablePreferences: Boolean(data?.portablePreferences || data?.settings),
     hasDesktopPreferences: Boolean(data?.desktopPreferences),
   };
@@ -131,6 +142,12 @@ export function selectBackupSections(
 ) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const backup = value as Record<string, unknown>;
+  if (backup.format === "seenary.cloud-backup") {
+    const selected = { ...backup };
+    if (!options.restoreLibrary) delete selected.state;
+    if (!options.restorePreferences) delete selected.data;
+    return selected;
+  }
   const sourceData = backup.data && typeof backup.data === "object" && !Array.isArray(backup.data)
     ? backup.data as Record<string, unknown>
     : {};

@@ -1,6 +1,6 @@
 {
   "name": "seenary",
-  "version": "0.1.12-beta",
+  "version": "0.2.0-beta",
   "description": "Anime and media tracking desktop app.",
   "desktopName": "seenary",
   "main": "main.js",
@@ -54,6 +54,7 @@
     "test:analytics": "node scripts/engagement-analytics-smoke.js",
     "release:version": "node scripts/set-release-version.js",
     "release:check": "node scripts/release-readiness.js",
+    "release:artifacts": "node scripts/release-artifact-smoke.js",
     "pack": "npm run build:frontend && electron-builder --dir",
     "pack:linux": "npm run build:frontend && electron-builder --linux dir --x64",
     "dist": "node scripts/build-release.js",

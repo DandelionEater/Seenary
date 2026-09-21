@@ -18,6 +18,9 @@ type EditableMediaListEntry = EditableListEntry & {
   manga_id?: number;
   volume_progress?: number;
   is_rereading?: number | boolean;
+  cloud_pending?: boolean;
+  cloud_conflict?: string | null;
+  cloud_action?: "upsert" | "delete" | null;
 };
 
 type ListEntryModalProps = {
@@ -111,6 +114,7 @@ export function ListEntryModal({
   );
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [resolvingConflict, setResolvingConflict] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -261,6 +265,23 @@ export function ListEntryModal({
     }
   }
 
+  async function resolveConflict(choice: "cloud" | "device") {
+    if (resolvingConflict) return;
+    try {
+      setResolvingConflict(true);
+      setMessage(null);
+      const result = isManga
+        ? await window.api.resolveMyMangaListConflict(animeId, choice)
+        : await window.api.resolveMyListConflict(animeId, choice);
+      if (!result.ok) { setMessage(result.message); return; }
+      if (result.entry) onSaved(result.entry, result.message);
+      else onRemoved(result.message);
+      onClose();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to resolve the cloud conflict.");
+    } finally { setResolvingConflict(false); }
+  }
+
   function chooseStatus(nextStatus: string) {
     if (nextStatus === "watching") {
       setStartedAt((current) => current || todayDate());
@@ -347,6 +368,19 @@ export function ListEntryModal({
         </div>
 
         <div className="scroll-container -mr-4 flex min-h-0 flex-1 flex-col space-y-4 overflow-x-hidden overflow-y-auto pr-4">
+          {entry?.cloud_conflict && (
+            <section className="rounded-2xl border border-amber-300/25 bg-amber-300/10 p-4" role="alert">
+              <p className="font-semibold text-amber-50">This title changed on another device</p>
+              <p className="mt-2 text-sm leading-6 text-amber-50/70">Review the values below, then keep the current cloud version or apply this device’s queued edit to the latest revision.</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button type="button" disabled={resolvingConflict} onClick={() => void resolveConflict("cloud")} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white">Keep cloud version</button>
+                <button type="button" disabled={resolvingConflict} onClick={() => void resolveConflict("device")} className="rounded-xl bg-amber-100 px-4 py-2 text-sm font-semibold text-black">Apply my edit</button>
+              </div>
+            </section>
+          )}
+          {entry?.cloud_pending && !entry.cloud_conflict && (
+            <p className="rounded-2xl border border-sky-300/20 bg-sky-300/10 px-4 py-3 text-sm text-sky-50/80" role="status">Saved on this device and waiting for Atlas acknowledgement.</p>
+          )}
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
               <div className="min-w-0">
@@ -638,7 +672,7 @@ export function ListEntryModal({
           <button
             type="button"
             onClick={handleRemove}
-            disabled={busy}
+            disabled={busy || resolvingConflict || Boolean(entry?.cloud_conflict)}
             className="flex items-center justify-center gap-2 rounded-2xl border border-red-400/15 bg-red-500/10 px-4 py-3 text-sm text-red-200 transition hover:bg-red-500/15 disabled:opacity-50"
           >
             <TrashIcon className="h-4 w-4" />
@@ -649,7 +683,7 @@ export function ListEntryModal({
             <button
               type="button"
               onClick={onClose}
-              disabled={busy}
+              disabled={busy || resolvingConflict}
               className="flex-1 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/75 transition hover:bg-white/10 hover:text-white disabled:opacity-50 sm:flex-none"
             >
               Cancel
@@ -658,7 +692,7 @@ export function ListEntryModal({
             <button
               type="button"
               onClick={handleSave}
-              disabled={busy}
+              disabled={busy || resolvingConflict || Boolean(entry?.cloud_conflict)}
               className="inline-flex flex-1 items-center justify-center gap-2 rounded-2xl bg-[var(--app-accent)] px-5 py-3 text-sm font-semibold text-black shadow-lg shadow-[var(--app-accent)]/15 transition hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 sm:flex-none"
             >
               <CheckCircleIcon className="h-4 w-4" />

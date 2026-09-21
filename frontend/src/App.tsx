@@ -53,6 +53,7 @@ import {
   applyBackupPreferences,
   collectBackupPreferences,
 } from "./utils/portablePreferences";
+import { resolveLibraryHydration } from "./utils/libraryHydration";
 
 const MediaDetails = lazy(() => import("./components/AnimeDetails"));
 const SongSearchCard = lazy(() =>
@@ -197,6 +198,8 @@ type AppNotification = {
   read: boolean;
 };
 
+type LibraryHydrationStatus = "loading" | "current" | "stale" | "offline" | "retrying";
+
 type DesktopUpdateInfo = {
   version: string;
   releaseName?: string;
@@ -334,6 +337,8 @@ function App() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
   const [syncToast, setSyncToast] = useState<SyncToastState>(null);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [libraryHydrationStatus, setLibraryHydrationStatus] =
+    useState<LibraryHydrationStatus>("loading");
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdateState>({
@@ -344,6 +349,9 @@ function App() {
     errorMessage: null,
   });
   const sessionWarningKeysRef = useRef<Set<string>>(new Set());
+  const libraryLoadFailedRef = useRef(false);
+  const libraryAccountGenerationRef = useRef(0);
+  const libraryLoadPromiseRef = useRef<{ generation: number; promise: Promise<void> } | null>(null);
   const homeScrollTopRef = useRef(0);
   const homeScrollElementRef = useRef<HTMLDivElement | null>(null);
   const listScrollTopRef = useRef(0);
@@ -567,26 +575,48 @@ function App() {
     );
   };
 
-  const loadTrackedEntries = useCallback(async () => {
-    try {
-      const [result, mangaResult] = await Promise.all([
-        window.api.getMyList(),
-        window.api.getMyMangaList(),
-      ]);
+  const loadTrackedEntries = useCallback(() => {
+    const generation = libraryAccountGenerationRef.current;
+    if (libraryLoadPromiseRef.current?.generation === generation) return libraryLoadPromiseRef.current.promise;
+    if (libraryLoadFailedRef.current) setLibraryHydrationStatus("retrying");
 
-      if (!result.ok) {
-        setTrackedEntries([]);
-      } else {
-        setTrackedEntries(result.entries || []);
+    const request = (async () => {
+      const [animeResult, mangaResult] = await Promise.allSettled([
+        window.api.getMyList(), window.api.getMyMangaList(),
+      ]);
+      const hydration = resolveLibraryHydration<TrackedAnimeEntry, TrackedMangaEntry>(animeResult, mangaResult);
+      if (libraryAccountGenerationRef.current !== generation) return;
+      if (hydration.animeEntries !== undefined) setTrackedEntries(hydration.animeEntries);
+      if (hydration.mangaEntries !== undefined) setTrackedMangaEntries(hydration.mangaEntries);
+
+      if (hydration.failed) {
+        console.error("Failed to load one or more tracked media lists.", {
+          anime: animeResult.status === "rejected" ? animeResult.reason : animeResult.value,
+          manga: mangaResult.status === "rejected" ? mangaResult.reason : mangaResult.value,
+        });
+        setLibraryHydrationStatus(navigator.onLine ? "stale" : "offline");
+        if (!libraryLoadFailedRef.current) {
+          libraryLoadFailedRef.current = true;
+          showSyncToast("warning", "Library temporarily unavailable", "Seenary kept your current library on screen and will try again when the connection returns.");
+        }
+        return;
       }
 
-      setTrackedMangaEntries(mangaResult.ok ? mangaResult.entries || [] : []);
-    } catch (error) {
-      console.error("Failed to load tracked media entries:", error);
-      setTrackedEntries([]);
-      setTrackedMangaEntries([]);
-    }
-  }, []);
+      setLibraryHydrationStatus("current");
+      if (libraryLoadFailedRef.current) {
+        libraryLoadFailedRef.current = false;
+        showSyncToast("success", "Library reconnected", "Your latest cloud library is available again.");
+      }
+    })().finally(() => {
+      if (libraryLoadPromiseRef.current?.promise === request) libraryLoadPromiseRef.current = null;
+    });
+    libraryLoadPromiseRef.current = { generation, promise: request };
+    return request;
+  }, [showSyncToast]);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("seenary:library-connection", { detail: { status: libraryHydrationStatus } }));
+  }, [libraryHydrationStatus]);
 
   const notifyIfSessionIsExpiring = useCallback((expiresAt?: number) => {
     if (!expiresAt) {
@@ -740,6 +770,7 @@ function App() {
         const session = await window.api.getSession();
 
         if (!session.authenticated || !session.user) {
+          libraryAccountGenerationRef.current += 1;
           setAuthUser(null);
           setShowTutorial(false);
           setTrackedEntries([]);
@@ -768,16 +799,32 @@ function App() {
       return;
     }
 
-    const refreshLiveState = () => {
+    const refreshLiveState = async () => {
       if (document.visibilityState === "hidden") {
         return;
       }
-
-      loadTrackedEntries();
+      try {
+        const session = await window.api.getSession();
+        if (!session.authenticated || !session.user) return;
+        if (session.user.id !== authUser.id) {
+          libraryAccountGenerationRef.current += 1;
+          setTrackedEntries([]);
+          setTrackedMangaEntries([]);
+          setLibraryHydrationStatus("loading");
+          libraryLoadFailedRef.current = false;
+          setAuthUser({ id: session.user.id, username: session.user.username, tutorial_dismissed: session.user.tutorial_dismissed });
+        }
+        await loadTrackedEntries();
+      } catch (error) {
+        console.error("Failed to refresh the active Seenary session:", error);
+        await loadTrackedEntries();
+      }
     };
 
-    window.addEventListener("focus", refreshLiveState);
-    document.addEventListener("visibilitychange", refreshLiveState);
+    const requestLiveRefresh = () => { void refreshLiveState(); };
+    window.addEventListener("focus", requestLiveRefresh);
+    window.addEventListener("online", requestLiveRefresh);
+    document.addEventListener("visibilitychange", requestLiveRefresh);
     const refreshImportedLibrary = (event: Event) => {
       const detail = (event as CustomEvent<{
         ok?: boolean;
@@ -800,8 +847,9 @@ function App() {
     window.addEventListener("seenary:local-library-updated", refreshImportedLibrary);
 
     return () => {
-      window.removeEventListener("focus", refreshLiveState);
-      document.removeEventListener("visibilitychange", refreshLiveState);
+      window.removeEventListener("focus", requestLiveRefresh);
+      window.removeEventListener("online", requestLiveRefresh);
+      document.removeEventListener("visibilitychange", requestLiveRefresh);
       window.removeEventListener("seenary:local-library-updated", refreshImportedLibrary);
     };
   }, [authUser, loadTrackedEntries, showSyncToast]);
@@ -1032,8 +1080,8 @@ function App() {
     return result;
   };
 
-  const handleDeleteAccount = async (usernameConfirmation: string) => {
-    const result = await window.api.deleteAccount(usernameConfirmation);
+  const handleDeleteAccount = async (usernameConfirmation: string, password: string) => {
+    const result = await window.api.deleteAccount(usernameConfirmation, password);
     if (!result.ok) return result;
 
     setAuthUser(null);
@@ -1052,6 +1100,21 @@ function App() {
     setPreviousView("home");
     setDetailsHistory([]);
     return result;
+  };
+
+  const handleExportAccountData = async () => {
+    const result = await window.api.exportAccountData();
+    if (!result.ok || !result.export) throw new Error(result.message || "Account export failed.");
+    const blob = new Blob([JSON.stringify(result.export, null, 2)], { type: "application/json" });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `seenary-account-data-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(url);
+    showSyncToast("success", "Account data exported", "Your Seenary account archive was downloaded.");
   };
 
   const handleExportLocalBackup = async () => {
@@ -1118,6 +1181,11 @@ function App() {
     username: string;
     tutorial_dismissed: number;
   }) => {
+    libraryAccountGenerationRef.current += 1;
+    setTrackedEntries([]);
+    setTrackedMangaEntries([]);
+    setLibraryHydrationStatus("loading");
+    libraryLoadFailedRef.current = false;
     setAuthUser(user);
     setShowTutorial(!user.tutorial_dismissed);
     setCurrentView(settings.startView === "list" ? "list" : "home");
@@ -1488,6 +1556,7 @@ function App() {
 
   const handleLogout = async () => {
     await window.api.logout();
+    libraryAccountGenerationRef.current += 1;
     setAuthUser(null);
     setShowTutorial(false);
     setSearchQuery("");
@@ -1845,6 +1914,16 @@ function App() {
                 onDismiss={() => setSyncToast(null)}
               />
 
+              {libraryHydrationStatus !== "current" && (
+                <div className="fixed inset-x-0 top-20 z-30 mx-auto flex w-fit max-w-[calc(100%-2rem)] items-center gap-3 rounded-2xl border border-amber-200/20 bg-[#19170f]/95 px-4 py-3 text-sm text-amber-50 shadow-xl backdrop-blur-md" role="status" aria-live="polite">
+                  <ArrowPathIcon className={`h-4 w-4 shrink-0 ${libraryHydrationStatus === "loading" || libraryHydrationStatus === "retrying" ? "animate-spin" : ""}`} />
+                  <span>{libraryHydrationStatus === "loading" ? "Loading your cloud library…" : libraryHydrationStatus === "retrying" ? "Reconnecting to your cloud library…" : libraryHydrationStatus === "offline" ? "Offline — showing the last library saved on this device." : "Cloud library unavailable — your current library is preserved."}</span>
+                  {(libraryHydrationStatus === "stale" || libraryHydrationStatus === "offline") && (
+                    <button type="button" onClick={() => void loadTrackedEntries()} className="rounded-lg border border-amber-100/20 bg-amber-100/10 px-3 py-1.5 font-semibold transition hover:bg-amber-100/20 focus:outline-none focus:ring-2 focus:ring-amber-100/50">Retry</button>
+                  )}
+                </div>
+              )}
+
               {!showTutorial && !settings.analyticsConsentDecided && (
                 <AnalyticsConsentModal
                   onChoose={(enabled) => {
@@ -1928,6 +2007,7 @@ function App() {
                     onPullFromMal={handlePullFromMal}
                     onClearLists={handleClearLists}
                     onDeleteAccount={handleDeleteAccount}
+                    onExportAccountData={handleExportAccountData}
                     onExportLocalBackup={handleExportLocalBackup}
                     onImportLocalBackup={handleImportLocalBackup}
                   />

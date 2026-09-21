@@ -24,7 +24,19 @@ export function browserStorage(namespace: string): Storage {
       });
     } finally { db.close(); }
   }
-  return { read: key => transaction(key), write: async (key, state) => { await transaction(key, state); } };
+  async function remove(key: string) {
+    const db = await database();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('accounts', 'readwrite');
+        tx.objectStore('accounts').delete(`${namespace}:${key}`);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('Local account cleanup was interrupted.'));
+      });
+    } finally { db.close(); }
+  }
+  return { read: key => transaction(key), write: async (key, state) => { await transaction(key, state); }, remove };
 }
 
 export async function accountLock<T>(namespace: string, userId: string, task: () => Promise<T>): Promise<T> {
