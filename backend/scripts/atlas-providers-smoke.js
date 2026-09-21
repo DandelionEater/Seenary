@@ -59,6 +59,9 @@ async function main() {
     assert.equal((await accounts.getSession(login.token)).authenticated, true);
     const externalStart = await providers.begin('anilist', 'login', null, binding, null, 'poll');
     const externalState = new URL(externalStart.authorizationUrl).searchParams.get('state');
+    await repo.oauthFlows.updateOne({ _id: tokenHash(externalState) }, { $set: { mode: 'processing' } });
+    assert.equal((await providers.poll('anilist', externalStart.pollToken)).pending, true, 'desktop polling waits through callback processing');
+    await repo.oauthFlows.updateOne({ _id: tokenHash(externalState) }, { $set: { mode: 'login' } });
     assert.equal((await providers.complete('anilist', externalState, '404', null)).delivered, true, 'external callback needs no browser cookie');
     const externalResult = await providers.poll('anilist', externalStart.pollToken);
     assert.equal(externalResult.needsUsername, true, 'desktop polling receives the provider result');

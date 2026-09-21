@@ -69,12 +69,16 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
       const flowQuery = { _id: tokenHash(state), provider, expiresAt: { $gt: new Date() } };
       const candidate = await repo.oauthFlows.findOne(flowQuery);
       if (!candidate || !candidate.pollHash && (!/^[a-f0-9]{64}$/.test(binding || '') || candidate.bindingHash !== tokenHash(binding))) return fail('Invalid or expired authorization.');
-      const flow = await repo.oauthFlows.findOneAndDelete(flowQuery);
+      const flow = await repo.oauthFlows.findOneAndUpdate({ ...flowQuery, mode: candidate.mode },
+        { $set: { mode: 'processing' } }, { returnDocument: 'before' });
       if (!flow) return fail('Invalid or expired authorization.');
       const deliver = async (result) => {
+        if (flow.pollHash) {
+          await repo.oauthFlows.insertOne({ _id: flow.pollHash, provider, mode: 'completion', bindingHash: flow.bindingHash,
+            completion: cipher.encrypt(JSON.stringify(result)), expiresAt: new Date(Date.now() + 10 * 60000) });
+        }
+        await repo.oauthFlows.deleteOne({ _id: flow._id, mode: 'processing' });
         if (!flow.pollHash) return result;
-        await repo.oauthFlows.insertOne({ _id: flow.pollHash, provider, mode: 'completion', bindingHash: flow.bindingHash,
-          completion: cipher.encrypt(JSON.stringify(result)), expiresAt: new Date(Date.now() + 10 * 60000) });
         return { ok: true, delivered: true };
       };
       if (typeof code !== 'string' || !code || code.length > 4096) return deliver(fail('Authorization was denied or cancelled.'));
