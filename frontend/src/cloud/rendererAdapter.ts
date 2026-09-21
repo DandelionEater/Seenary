@@ -109,7 +109,12 @@ export function installAtlasRenderer(legacy: Api) {
     if (value?.id !== user?.id) { refreshNeeded = true; seenRevisions.clear(); importPreviews.clear(); }
     user = value;
     preferenceId = null;
-    if (!value) { localStorage.removeItem(sessionKey); localStorage.removeItem(`seenary-cloud-user:${endpoint}`); return null; }
+    if (!value) {
+      localStorage.removeItem(sessionKey);
+      localStorage.removeItem(`seenary-cloud-user:${endpoint}`);
+      notify();
+      return null;
+    }
     localStorage.setItem(sessionKey, JSON.stringify(value));
     localStorage.setItem(`seenary-cloud-user:${endpoint}`, JSON.stringify(value));
     // A local UI/preference alias only. Cloud authorization and storage always use the UUID.
@@ -121,6 +126,7 @@ export function installAtlasRenderer(legacy: Api) {
       if (!aliases[identity]) { aliases[identity] = Math.min(0, ...Object.values(aliases)) - 1; localStorage.setItem(key, JSON.stringify(aliases)); }
       return aliases[identity];
     });
+    notify();
     return { ...value, id: preferenceId, cloudUserId: value.id };
   }
   async function operate<T>(task: (client: LibraryClient) => Promise<T>): Promise<T> {
