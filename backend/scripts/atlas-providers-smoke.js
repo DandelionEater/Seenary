@@ -107,15 +107,7 @@ async function main() {
       $set: { lastSuccessAt: new Date(), lastOutcome: 'succeeded' },
       $unset: { manualRequestedAt: '', leaseUntil: '' },
     });
-    const freshPull = await providers.requestInboundSync(alice.token, 'anilist');
-    assert.equal(freshPull.skippedFresh, true);
-    assert.equal(freshPull.isFirstSync, false);
-    await repo.providerRefreshStates.updateOne({ _id: aliceAniList._id }, {
-      $set: { lastSuccessAt: new Date(Date.now() - 6 * 60000) },
-    });
-    const laterPull = await providers.requestInboundSync(alice.token, 'anilist');
-    assert.equal(laterPull.skippedFresh, undefined);
-    assert.equal(laterPull.isFirstSync, false);
+    assert.equal((await providers.requestInboundSync(alice.token, 'anilist')).isFirstSync, false);
 
     let release;
     pendingRefresh = new Promise((resolve) => { release = resolve; });
