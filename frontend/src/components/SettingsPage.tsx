@@ -4048,25 +4048,42 @@ export function SettingsPage({
           <div ref={rememberSectionRef("sync")} className="scroll-mt-24">
             <AccordionSection
               icon={ArrowPathIcon}
-              title={syncStatus.linked ? `${manualSyncTargetsLabel} Sync` : "External Sync"}
+              title={syncStatus.loading ? "External Sync" : syncStatus.linked ? `${manualSyncTargetsLabel} Sync` : "External Sync"}
               scope="Account"
               description={
-                syncStatus.linked
+                syncStatus.loading
+                  ? "Checking linked accounts and synchronization status."
+                  : syncStatus.linked
                   ? `Push local Anime and Manga changes to ${manualSyncTargetsLabel}.`
                   : "Link an external account before syncing local list changes."
               }
               summary={[
-                syncStatus.linked
+                syncStatus.loading
+                  ? "Loading"
+                  : syncStatus.linked
                   ? syncStatus.autoSyncEnabled
                     ? "Auto on"
                     : "Auto off"
                   : "Auto unavailable",
-                `${syncStatus.pendingCount} queued`,
-                syncStatus.linked ? manualSyncTargetsLabel : "Unavailable",
+                syncStatus.loading ? "Checking queue" : `${syncStatus.pendingCount} queued`,
+                syncStatus.loading ? "Please wait" : syncStatus.linked ? manualSyncTargetsLabel : "Unavailable",
               ]}
               open={openSection === "sync"}
               onToggle={() => toggleSection("sync")}
             >
+            {syncStatus.loading ? (
+              <div className="flex min-h-72 items-center justify-center overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-6 text-white">
+                <div className="flex flex-col items-center text-center">
+                  <div className="h-12 w-12 animate-spin rounded-full border border-(--app-accent)/25 border-t-(--app-accent)" />
+                  <p className="mt-5 text-xs uppercase tracking-[0.24em] text-white/35">
+                    Loading sync controls
+                  </p>
+                  <p className="mt-2 text-sm text-white/65">
+                    Checking linked accounts and queued changes...
+                  </p>
+                </div>
+              </div>
+            ) : (
             <div className="space-y-5">
               <SectionHeading
                 icon={ArrowPathIcon}
@@ -4212,6 +4229,7 @@ export function SettingsPage({
                 </div>
               )}
             </div>
+            )}
             </AccordionSection>
           </div>
 
