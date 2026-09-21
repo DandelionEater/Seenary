@@ -1,6 +1,35 @@
 require('../env');
 
 const dns = require('node:dns');
+const http = require('node:http');
+
+const callbackRelays = [];
+
+async function startCallbackRelay(provider, redirectUri) {
+  const redirect = new URL(redirectUri);
+  if (redirect.port === '3001') return;
+  if (redirect.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(redirect.hostname)
+      || redirect.pathname !== `/auth/${provider}/callback`) {
+    throw new Error(`The local ${provider} callback must use localhost and the expected callback path.`);
+  }
+  const server = http.createServer((request, response) => {
+    const incoming = new URL(request.url, redirect);
+    if (incoming.pathname !== redirect.pathname) {
+      response.writeHead(404).end();
+      return;
+    }
+    const target = new URL(`http://127.0.0.1:3001/auth/${provider}/callback`);
+    target.search = incoming.search;
+    response.writeHead(302, { Location: target.toString(), 'Cache-Control': 'no-store' });
+    response.end();
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(Number(redirect.port), redirect.hostname, resolve);
+  });
+  callbackRelays.push(server);
+  console.log(`${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} callback relay: ${redirect.origin}${redirect.pathname}`);
+}
 
 async function resolveWith(name, type) {
   const response = await fetch(
@@ -50,9 +79,17 @@ async function useDirectAtlasSeeds() {
 
 async function main() {
   await useDirectAtlasSeeds();
+  process.env.ATLAS_ANILIST_REDIRECT_URI ||= 'http://127.0.0.1:37645/auth/anilist/callback';
+  process.env.ATLAS_MAL_REDIRECT_URI ||= 'http://127.0.0.1:4000/auth/mal/callback';
+  await startCallbackRelay('anilist', process.env.ATLAS_ANILIST_REDIRECT_URI);
+  await startCallbackRelay('mal', process.env.ATLAS_MAL_REDIRECT_URI);
   process.argv = ['node', 'atlas-accounts', 'serve'];
   require('./atlas-accounts');
 }
+
+const closeRelays = () => callbackRelays.forEach(server => server.close());
+process.once('SIGINT', closeRelays);
+process.once('SIGTERM', closeRelays);
 
 main().catch(() => {
   console.error('Local Atlas startup failed. Check Atlas network access and the backend environment values. No credentials were logged.');
