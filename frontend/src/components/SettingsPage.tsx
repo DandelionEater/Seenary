@@ -2,13 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, 
 import {
   ArrowTopRightOnSquareIcon,
   ArrowPathIcon,
+  ArrowUpTrayIcon,
+  ArrowsRightLeftIcon,
   BookmarkIcon,
+  BoltIcon,
   BugAntIcon,
   ChartBarSquareIcon,
   CheckIcon,
   CheckCircleIcon,
   ChevronDownIcon,
   CloudArrowDownIcon,
+  CloudIcon,
   CommandLineIcon,
   ClipboardDocumentIcon,
   DocumentTextIcon,
@@ -4055,7 +4059,7 @@ export function SettingsPage({
 
           <div ref={rememberSectionRef("sync")} className="scroll-mt-24">
             <AccordionSection
-              icon={ArrowPathIcon}
+              icon={CloudIcon}
               title={syncStatus.loading ? "External Sync" : syncStatus.linked ? `${manualSyncTargetsLabel} Sync` : "External Sync"}
               scope="Account"
               description={
@@ -4094,7 +4098,7 @@ export function SettingsPage({
             ) : (
             <div className="space-y-5">
               <SectionHeading
-                icon={ArrowPathIcon}
+                icon={ArrowsRightLeftIcon}
                 title="Sync controls"
                 description={
                   syncStatus.linked
@@ -4105,7 +4109,7 @@ export function SettingsPage({
 
               <div className="space-y-3">
                 <ToggleSetting
-                  icon={ArrowPathIcon}
+                  icon={BoltIcon}
                   title="Automatic sync"
                   description={
                     syncStatus.linked
@@ -4123,7 +4127,7 @@ export function SettingsPage({
                 <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 items-center gap-3">
                     <div className="shrink-0 rounded-2xl border border-white/10 bg-white/5 p-2 text-white/65">
-                      <ArrowPathIcon className="h-5 w-5" />
+                      <ArrowUpTrayIcon className="h-5 w-5" />
                     </div>
                     <div className="min-w-0">
                       <p className="font-semibold text-white">Manual sync</p>
@@ -4160,7 +4164,7 @@ export function SettingsPage({
                 <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 items-center gap-3">
                     <div className="shrink-0 rounded-2xl border border-white/10 bg-white/5 p-2 text-white/65">
-                      <ArrowPathIcon className="h-5 w-5" />
+                      <CloudArrowDownIcon className="h-5 w-5" />
                     </div>
                     <div className="min-w-0">
                       <p className="font-semibold text-white">Update from {syncTargetLabel}</p>
