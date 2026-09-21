@@ -17,6 +17,7 @@ function tokenFields(data, cipher, previousRefresh = null) {
 }
 
 function createProviderService({ client, repo, accounts, cipher, adapters }) {
+  const inboundFreshnessMs = 5 * 60 * 1000;
   async function transaction(operation) {
     const session = client.startSession();
     try { return await session.withTransaction(() => operation(session)); }
@@ -240,6 +241,10 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
       const isFirstSync = !pending?.lastSuccessAt;
       if (pending?.manualRequestedAt || pending?.leaseUntil && new Date(pending.leaseUntil) > requestedAt) {
         return { ok: true, requestedAt: pending.manualRequestedAt || requestedAt, alreadyQueued: true, isFirstSync };
+      }
+      const lastSuccessAt = pending?.lastSuccessAt ? new Date(pending.lastSuccessAt) : null;
+      if (lastSuccessAt && requestedAt.getTime() - lastSuccessAt.getTime() < inboundFreshnessMs) {
+        return { ok: true, skippedFresh: true, lastSuccessAt, freshUntil: new Date(lastSuccessAt.getTime() + inboundFreshnessMs), isFirstSync: false };
       }
       await repo.providerRefreshStates.updateOne({ _id: link._id }, {
         $set: { userId: user._id, provider, linkRevision: link.revision,

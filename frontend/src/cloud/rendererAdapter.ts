@@ -20,6 +20,9 @@ type AccountReply = Omit<Reply, 'user'> & {
   requestedAt?: string;
   alreadyQueued?: boolean;
   isFirstSync?: boolean;
+  skippedFresh?: boolean;
+  lastSuccessAt?: string;
+  freshUntil?: string;
   sync?: {
     running: boolean;
     requestedAt: string | null;
@@ -349,9 +352,15 @@ export function installAtlasRenderer(legacy: Api) {
   async function pullProvider(provider: 'anilist' | 'mal') {
     const queued = await rpc('requestProviderSync', [provider], user?.id);
     if (!queued.ok) return queued;
+    const label = provider === 'anilist' ? 'AniList' : 'MyAnimeList';
+    if (queued.skippedFresh) {
+      const completedAt = Date.parse(String(queued.lastSuccessAt || ''));
+      const ageSeconds = Number.isFinite(completedAt) ? Math.max(0, Math.round((Date.now() - completedAt) / 1000)) : 0;
+      const age = ageSeconds < 60 ? `${ageSeconds} seconds ago` : `${Math.floor(ageSeconds / 60)} minute${Math.floor(ageSeconds / 60) === 1 ? '' : 's'} ago`;
+      return { ok: true, queued: false, message: `${label} library is already current. The last update completed ${age}.` };
+    }
     const requestedAt = Date.parse(String(queued.requestedAt));
     if (Number.isFinite(requestedAt)) void watchProviderPull(provider, requestedAt);
-    const label = provider === 'anilist' ? 'AniList' : 'MyAnimeList';
     return { ok: true, queued: true, message: queued.alreadyQueued
       ? `${label} update is already running in the background.`
       : queued.isFirstSync
