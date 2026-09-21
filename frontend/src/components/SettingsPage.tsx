@@ -4072,9 +4072,10 @@ export function SettingsPage({
                   checked={syncStatus.autoSyncEnabled}
                   disabled={!syncStatus.linked || syncStatus.loading}
                   onChange={updateAutoSync}
+                  className="md:min-h-60"
                 />
 
-                <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+                <div className="flex flex-col justify-center rounded-3xl border border-white/10 bg-white/[0.03] p-5 md:min-h-60">
                   <p className="font-semibold text-white">Manual sync</p>
                   <p className="mt-2 text-sm leading-6 text-white/45">
                     {syncStatus.pendingCount > 0
@@ -4102,9 +4103,10 @@ export function SettingsPage({
                       View activity
                     </button>
                   </div>
+                  <div className="mt-3 min-h-10" aria-hidden="true" />
                 </div>
 
-                <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+                <div className="flex flex-col justify-center rounded-3xl border border-white/10 bg-white/[0.03] p-5 md:min-h-60">
                   <p className="font-semibold text-white">Update from {syncTargetLabel}</p>
                   <p className="mt-2 text-sm leading-6 text-white/45">
                     {!syncStatus.linked
@@ -4127,14 +4129,13 @@ export function SettingsPage({
                   >
                     {isPullingFromRemote ? "Updating..." : `Update from ${syncTargetLabel}`}
                   </ProgressActionButton>
-                  {isPullingFromRemote && syncProgress?.operation === (isAniListSync ? "pull-anilist" : "pull-mal") && (
-                    <p className="mt-3 text-xs leading-5 text-white/50" aria-live="polite">
-                      {syncProgress.label}
-                      {Number(syncProgress.total) > 0
+                  <p className="mt-3 min-h-10 text-xs leading-5 text-white/50" aria-live="polite">
+                    {isPullingFromRemote && syncProgress?.operation === (isAniListSync ? "pull-anilist" : "pull-mal")
+                      ? <>{syncProgress.label}{Number(syncProgress.total) > 0
                         ? ` ${Number(syncProgress.current || 0).toLocaleString()} of ${Number(syncProgress.total).toLocaleString()} titles.`
-                        : ""}
-                    </p>
-                  )}
+                        : ""}</>
+                      : null}
+                  </p>
                 </div>
               </div>
 
@@ -5421,6 +5422,7 @@ function ToggleSetting({
   checked,
   disabled = false,
   onChange,
+  className = "",
 }: {
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   title: string;
@@ -5428,13 +5430,14 @@ function ToggleSetting({
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void | Promise<void>;
+  className?: string;
 }) {
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`flex w-full items-center justify-between gap-4 rounded-3xl border p-5 text-left transition focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]/55 ${
+      className={`flex w-full items-center justify-between gap-4 rounded-3xl border p-5 text-left transition focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]/55 ${className} ${
         disabled
           ? "cursor-not-allowed border-white/5 bg-white/[0.02] opacity-45"
           : checked
@@ -6928,20 +6931,21 @@ function ProgressActionButton({
             style={{ width: `${percent}%` }}
           />
         )}
-        <span className="relative z-10 inline-flex items-center gap-2">
-          {active ? (
-            hasTotal ? (
+        <span className={`relative z-10 inline-flex items-center gap-2 ${active ? "invisible" : ""}`}>
+          {children}
+        </span>
+        {active && (
+          <span className="absolute inset-0 z-10 inline-flex items-center justify-center gap-2">
+            {hasTotal ? (
               `${labelPercent}%`
             ) : (
               <>
                 <ArrowPathIcon className="h-4 w-4 animate-spin" />
                 Working...
               </>
-            )
-          ) : (
-            children
-          )}
-        </span>
+            )}
+          </span>
+        )}
       </button>
     </div>
   );
