@@ -349,7 +349,7 @@ type SyncActivityItem = {
 };
 type SyncProgressEvent = {
   operation: "manual-sync" | "pull-anilist" | "pull-mal";
-  stage: "fetching" | "mapping" | "saving" | "processing" | "complete" | "failed";
+  stage: "queued" | "starting" | "fetching" | "mapping" | "reconciling" | "saving" | "processing" | "complete" | "failed";
   label: string;
   current?: number | null;
   total?: number | null;
@@ -795,6 +795,7 @@ export function SettingsPage({
   const [syncStatus, setSyncStatus] = useState({
     loading: true,
     linked: false,
+    linkedProviders: [] as Array<"anilist" | "mal">,
     provider: null as "anilist" | "mal" | null,
     providerLabel: null as string | null,
     syncTargetsLabel: null as string | null,
@@ -803,7 +804,7 @@ export function SettingsPage({
     feedback: null as { kind: "success" | "error"; message: string } | null,
   });
   const [isSyncing, setIsSyncing] = useState(false);
-  const [isPullingFromRemote, setIsPullingFromRemote] = useState(false);
+  const [pullingProvider, setPullingProvider] = useState<"anilist" | "mal" | null>(null);
   const [autoSyncPending, setAutoSyncPending] = useState<boolean | null>(null);
   const autoSyncRequestRef = useRef(false);
   const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(null);
@@ -943,8 +944,9 @@ export function SettingsPage({
     settings.themeAccent === "custom" ? "Accent Custom" : `Accent ${capitalize(settings.themeAccent)}`;
   const syncProviderLabel = syncStatus.providerLabel ?? "external account";
   const manualSyncTargetsLabel = syncStatus.syncTargetsLabel ?? syncProviderLabel;
-  const isAniListSync = syncStatus.provider === "anilist";
-  const syncTargetLabel = syncStatus.linked ? syncProviderLabel : "No linked account";
+  const inboundProviders = syncStatus.linkedProviders.length
+    ? syncStatus.linkedProviders
+    : syncStatus.provider ? [syncStatus.provider] : [];
 
   function toggleSection(section: SettingsSectionId) {
     setOpenSection((current) => {
@@ -1048,7 +1050,9 @@ export function SettingsPage({
     const removeListener = window.api.onSyncProgress((progress: SyncProgressEvent) => {
       setSyncProgress(progress);
       if (progress.operation === "pull-anilist" || progress.operation === "pull-mal") {
-        setIsPullingFromRemote(!["complete", "failed"].includes(progress.stage));
+        setPullingProvider(["complete", "failed"].includes(progress.stage)
+          ? null
+          : progress.operation === "pull-mal" ? "mal" : "anilist");
         if (progress.stage === "complete") {
           const message = progress.label;
           setSyncStatus((current) => ({
@@ -1592,6 +1596,7 @@ export function SettingsPage({
         ...current,
         loading: false,
         linked: Boolean(result.linked),
+        linkedProviders: result.linkedProviders ?? [],
         provider: result.provider ?? null,
         providerLabel: result.providerLabel ?? null,
         syncTargetsLabel: result.syncTargetsLabel ?? null,
@@ -1695,6 +1700,7 @@ export function SettingsPage({
         ...current,
         loading: false,
         linked: Boolean(result.linked),
+        linkedProviders: result.linkedProviders ?? current.linkedProviders,
         provider: result.provider ?? null,
         providerLabel: result.providerLabel ?? null,
         syncTargetsLabel: result.syncTargetsLabel ?? current.syncTargetsLabel,
@@ -1783,24 +1789,25 @@ export function SettingsPage({
     }
   }
 
-  async function pullFromRemote() {
-    const operation = syncStatus.provider === "mal" ? "pull-mal" : "pull-anilist";
+  async function pullFromRemote(provider: "anilist" | "mal") {
+    const operation = provider === "mal" ? "pull-mal" : "pull-anilist";
+    const providerLabel = provider === "mal" ? "MyAnimeList" : "AniList";
 
     try {
-      setIsPullingFromRemote(true);
+      setPullingProvider(provider);
       setSyncProgress({
         operation,
         stage: "fetching",
-        label: `Preparing ${syncTargetLabel} update...`,
+        label: `Preparing ${providerLabel} update...`,
         current: 0,
         total: null,
       });
       const result =
-        syncStatus.provider === "mal"
+        provider === "mal"
           ? await onPullFromMal()
           : await onPullFromAniList();
       if (!result.ok) {
-        setIsPullingFromRemote(false);
+        setPullingProvider(null);
         setSyncProgress(null);
       }
       await loadSyncStatus();
@@ -1817,7 +1824,7 @@ export function SettingsPage({
         await loadSyncActivity(syncActivityTab);
       }
     } catch (error) {
-      setIsPullingFromRemote(false);
+      setPullingProvider(null);
       setSyncProgress((current) => current?.operation === operation ? null : current);
       throw error;
     }
@@ -4160,17 +4167,22 @@ export function SettingsPage({
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:flex-row sm:items-center sm:justify-between">
+                {(inboundProviders.length ? inboundProviders : [null]).map((provider) => {
+                  const providerLabel = provider === "mal" ? "MyAnimeList" : provider === "anilist" ? "AniList" : "No linked account";
+                  const operation = provider === "mal" ? "pull-mal" : "pull-anilist";
+                  const progress = syncProgress?.operation === operation ? syncProgress : null;
+                  const active = pullingProvider === provider;
+                  return <div key={provider ?? "unlinked"} className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 items-center gap-3">
                     <div className="shrink-0 rounded-2xl border border-white/10 bg-white/5 p-2 text-white/65">
                       <CloudArrowDownIcon className="h-5 w-5" />
                     </div>
                     <div className="min-w-0">
-                      <p className="font-semibold text-white">Update from {syncTargetLabel}</p>
+                      <p className="font-semibold text-white">Update from {providerLabel}</p>
                       <p className="mt-1 text-sm leading-6 text-white/45">
-                        {!syncStatus.linked
+                        {!provider
                           ? "Link an external account before pulling remote list updates."
-                          : isAniListSync
+                          : provider === "anilist"
                           ? "Pull your Anime and Manga library from AniList and replace local list fields that differ."
                           : "Pull your Anime and Manga library from MyAnimeList and replace local list fields that differ."}
                       </p>
@@ -4179,26 +4191,23 @@ export function SettingsPage({
 
                   <div className="flex min-w-0 shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
                     <p className="max-w-sm text-xs leading-5 text-white/50 sm:text-right" aria-live="polite">
-                      {syncProgress?.operation === (isAniListSync ? "pull-anilist" : "pull-mal")
-                        ? <>{syncProgress.label}{Number(syncProgress.total) > 0
-                          ? ` ${Number(syncProgress.current || 0).toLocaleString()} of ${Number(syncProgress.total).toLocaleString()} titles.`
+                      {progress
+                        ? <>{progress.label}{Number(progress.total) > 0
+                          ? ` ${Number(progress.current || 0).toLocaleString()} of ${Number(progress.total).toLocaleString()} titles.`
                           : ""}</>
                         : null}
                     </p>
                     <ProgressActionButton
-                      onClick={pullFromRemote}
-                      disabled={!syncStatus.linked || isPullingFromRemote}
-                      active={isPullingFromRemote}
-                      progress={
-                        syncProgress?.operation === (isAniListSync ? "pull-anilist" : "pull-mal")
-                          ? syncProgress
-                          : null
-                      }
+                      onClick={() => provider ? pullFromRemote(provider) : undefined}
+                      disabled={!provider || pullingProvider !== null}
+                      active={active}
+                      progress={progress}
                     >
-                      {isPullingFromRemote ? "Updating..." : `Update from ${syncTargetLabel}`}
+                      {active ? "Updating..." : `Update from ${providerLabel}`}
                     </ProgressActionButton>
                   </div>
-                </div>
+                </div>;
+                })}
               </div>
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">

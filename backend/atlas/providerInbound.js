@@ -143,12 +143,20 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
         const access = await token(link); link = await repo.providerAccounts.findOne({ _id: link._id });
         const all = [];
         for (const type of ['ANIME', 'MANGA']) { await reserve(link.provider); all.push(...normalize(link.provider, type, await adapters.pull(link.provider, access, type, link.providerUserId))); }
-        if (link.provider === 'mal') for (const type of ['ANIME', 'MANGA']) {
-          const items = all.filter(item => item.type === type); const ids = items.map(item => item.providerId);
-          for (let offset = 0; offset < ids.length; offset += 50) {
-            await reserve('anilist'); const rows = await adapters.mapMal(type, ids.slice(offset, offset + 50));
-            const byMal = new Map((rows || []).filter(row => row.type === type && Number.isSafeInteger(row.idMal)).map(row => [row.idMal, row]));
-            for (const item of items.slice(offset, offset + 50)) item.mapping = byMal.get(item.providerId) || null;
+        if (link.provider === 'mal') {
+          let mapped = 0;
+          await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
+            { $set: { progress: { stage: 'mapping', current: 0, total: all.length, updatedAt: new Date(now()) } } });
+          for (const type of ['ANIME', 'MANGA']) {
+            const items = all.filter(item => item.type === type); const ids = items.map(item => item.providerId);
+            for (let offset = 0; offset < ids.length; offset += 50) {
+              await reserve('anilist'); const rows = await adapters.mapMal(type, ids.slice(offset, offset + 50));
+              const byMal = new Map((rows || []).filter(row => row.type === type && Number.isSafeInteger(row.idMal)).map(row => [row.idMal, row]));
+              for (const item of items.slice(offset, offset + 50)) item.mapping = byMal.get(item.providerId) || null;
+              mapped += Math.min(50, ids.length - offset);
+              await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
+                { $set: { progress: { stage: 'mapping', current: mapped, total: all.length, updatedAt: new Date(now()) } } });
+            }
           }
         }
         const providerKey = link.provider === 'anilist' ? 'anilistId' : 'malId';

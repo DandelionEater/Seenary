@@ -294,7 +294,8 @@ export function installAtlasRenderer(legacy: Api) {
     const [anilist, mal] = await Promise.all([rpc('getProviderAccount', ['anilist'], user?.id), rpc('getProviderAccount', ['mal'], user?.id)]);
     const primary = anilist.account ?? mal.account;
     const labels = [anilist.account && 'AniList', mal.account && 'MyAnimeList'].filter(Boolean);
-    return { ok: result.ok && anilist.ok && mal.ok, linked: Boolean(primary), provider: primary?.provider ?? null,
+    const linkedProviders = [anilist.account?.provider, mal.account?.provider].filter(Boolean) as Array<'anilist' | 'mal'>;
+    return { ok: result.ok && anilist.ok && mal.ok, linked: Boolean(primary), linkedProviders, provider: primary?.provider ?? null,
       providerLabel: primary?.provider === 'mal' ? 'MyAnimeList' : primary ? 'AniList' : null,
       syncTargetsLabel: labels.join(' and ') || null,
       autoSyncEnabled: result.settings?.autoSyncEnabled ?? false, pendingCount: (await load()).pending.length,
@@ -318,6 +319,7 @@ export function installAtlasRenderer(legacy: Api) {
             queued: `Waiting for the ${providerLabel} worker…`,
             starting: `Starting ${providerLabel} update…`,
             fetching: `Downloading Anime and Manga lists from ${providerLabel}…`,
+            mapping: `Matching MyAnimeList titles to Seenary…`,
             reconciling: `Reconciling ${providerLabel} library…`,
           };
           progressListeners.forEach(listener => listener({ operation, stage: remoteProgress.stage,

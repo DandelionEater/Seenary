@@ -101,7 +101,7 @@ type SyncActivityItem = {
 
 type SyncProgressEvent = {
   operation: "manual-sync" | "pull-anilist" | "pull-mal";
-  stage: "fetching" | "mapping" | "saving" | "processing" | "complete" | "failed";
+  stage: "queued" | "starting" | "fetching" | "mapping" | "reconciling" | "saving" | "processing" | "complete" | "failed";
   label: string;
   current?: number | null;
   total?: number | null;
@@ -375,6 +375,7 @@ declare global {
         ok: boolean;
         message?: string;
         linked?: boolean;
+        linkedProviders?: Array<"anilist" | "mal">;
         provider?: "anilist" | "mal" | null;
         providerLabel?: string | null;
         syncTargetsLabel?: string | null;
@@ -385,6 +386,7 @@ declare global {
         ok: boolean;
         message?: string;
         linked?: boolean;
+        linkedProviders?: Array<"anilist" | "mal">;
         provider?: "anilist" | "mal" | null;
         providerLabel?: string | null;
         syncTargetsLabel?: string | null;

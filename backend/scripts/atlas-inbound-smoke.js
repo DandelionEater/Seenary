@@ -101,13 +101,16 @@ async function scenario(repo, client, media) {
   result = await inbound.runOnce(1); assert.equal(result.results[0].status, 'skipped');
   assert.equal(await repoUnlink.libraryEntries.countDocuments({}), 0, 'unlink during a pull prevents later reconciliation');
 
-  const repoMal = localRepo(); const malUser = await link(repoMal, 'mal', 'mal'); let mappedBatches = 0;
+  const repoMal = localRepo(); const malUser = await link(repoMal, 'mal', 'mal'); let mappedBatches = 0; const mappingProgress = [];
   const malAdapters = { refresh: async () => ({ access_token: 'new' }), pull: async (_provider, token, type) => {
     assert.equal(token, 'mal-access'); return malPayload(type === 'ANIME' ? 21 : 22, type);
-  }, mapMal: async (type, ids) => { mappedBatches++; return ids.map(id => ({ id: id + 100, idMal: id, type })); } };
+  }, mapMal: async (type, ids) => { mappedBatches++;
+    mappingProgress.push((await repoMal.providerRefreshStates.findOne({ _id: 'link-mal' })).progress);
+    return ids.map(id => ({ id: id + 100, idMal: id, type })); } };
   inbound = createProviderInbound({ client: fakeClient, repo: repoMal, media: localMedia(repoMal), cipher, adapters: malAdapters,
     now: () => clock, spacing: { anilist: 0, mal: 0 } });
   result = await inbound.runOnce(1); assert.equal(result.results[0].counts.applied, 2); assert.equal(mappedBatches, 2);
+  assert.deepEqual(mappingProgress.map(progress => [progress.stage, progress.current, progress.total]), [['mapping', 0, 2], ['mapping', 1, 2]]);
   assert.equal((await repoMal.media.findOne({ type: 'ANIME', malId: 21 })).anilistId, 121);
   assert.equal((await repoMal.libraryEntries.findOne({ userId: malUser, type: 'MANGA' })).volumeProgress, 2);
   console.log('PASS: scheduled AL/MAL pulls, normalized inbound fields, bulk exact MAL mapping, ordered CAS reconciliation, favorite preservation, and no outbound echo.');
