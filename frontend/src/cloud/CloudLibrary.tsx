@@ -173,7 +173,7 @@ function EntryEditor({ entry, busy, onClose, onSave }: { entry: Entry; busy: boo
     <label><input type="checkbox" name="favorite" defaultChecked={entry.isFavorite} /> Favorite</label>
     <label>Progress<input name="progress" type="number" min="0" max="100000000" step="1" defaultValue={entry.progress} required /></label>
     {entry.type === 'MANGA' && <label>Volumes<input name="volumes" type="number" min="0" max="100000000" step="1" defaultValue={entry.volumeProgress} required /></label>}
-    <label>Score (0–100)<input name="score" type="number" min="0" max="100" step="any" defaultValue={entry.score ?? ''} /></label>
+    <label>Score (0–10)<input name="score" type="number" min="0" max="10" step="0.1" defaultValue={entry.score ?? ''} /></label>
     <label>Notes<textarea name="notes" maxLength={10000} defaultValue={entry.notes ?? ''} /></label>
     <label>Started<input name="startedAt" type="date" defaultValue={entry.startedAt ?? ''} /></label><label>Completed<input name="completedAt" type="date" defaultValue={entry.completedAt ?? ''} /></label>
     <label>Repeat count<input name="repeats" type="number" min="0" max="100000000" step="1" defaultValue={entry.repeatCount} required /></label>

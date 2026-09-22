@@ -25,12 +25,12 @@ function normalize(provider, type, payload) {
     const progress = provider === 'anilist' ? personal.progress : type === 'ANIME' ? personal.num_episodes_watched : personal.num_chapters_read;
     const volumeProgress = provider === 'anilist' ? personal.progressVolumes : personal.num_volumes_read;
     const repeatCount = provider === 'anilist' ? personal.repeat : type === 'ANIME' ? personal.num_times_rewatched : personal.num_times_reread;
-    const score = personal.score == null ? null : Number(personal.score) * 10;
+    const score = personal.score == null ? null : Number(personal.score);
     result.push({ providerId, malId: provider === 'anilist' && Number.isSafeInteger(media.idMal) && media.idMal > 0 ? media.idMal : null,
       type, publicMedia: media, remoteUpdatedAt: remoteTime(provider === 'anilist' ? personal.updatedAt : personal.updated_at), fields: {
         status, progress: Number.isSafeInteger(progress) && progress >= 0 ? progress : 0,
         volumeProgress: type === 'MANGA' && Number.isSafeInteger(volumeProgress) && volumeProgress >= 0 ? volumeProgress : 0,
-        score: Number.isFinite(score) && score >= 0 && score <= 100 ? score : null,
+        score: Number.isFinite(score) && score >= 0 && score <= 10 ? score : null,
         notes: typeof personal.notes === 'string' ? personal.notes : typeof personal.comments === 'string' ? personal.comments : null,
         startedAt: date(provider === 'anilist' ? personal.startedAt : personal.start_date),
         completedAt: date(provider === 'anilist' ? personal.completedAt : personal.finish_date),

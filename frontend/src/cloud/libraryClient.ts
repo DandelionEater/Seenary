@@ -203,7 +203,7 @@ function candidate(key: string, type: unknown, provider: 'anilist' | 'mal', id: 
   for (const [field, value] of Object.entries(patch)) {
     if (field === 'status' && !['planned', 'watching', 'completed', 'paused', 'dropped'].includes(String(value))) throw new Error(`Invalid status: ${key}`);
     if (['progress', 'volumeProgress', 'repeatCount'].includes(field) && (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > 100000000)) throw new Error(`Invalid progress: ${key}`);
-    if (field === 'score' && value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100)) throw new Error(`Invalid score: ${key}`);
+    if (field === 'score' && value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 10)) throw new Error(`Invalid score: ${key}`);
     if (['isFavorite', 'isRepeating'].includes(field) && typeof value !== 'boolean') throw new Error(`Invalid flag: ${key}`);
     if (field === 'notes' && value !== null && (typeof value !== 'string' || value.length > 10000)) throw new Error(`Invalid notes: ${key}`);
     if (['startedAt', 'completedAt'].includes(field) && value !== null && (typeof value !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value)) throw new Error(`Invalid date: ${key}`);

@@ -68,7 +68,7 @@ function createProviderDelivery({ repo, worker, cipher, adapters, now = () => Da
       progressVolumes: entry.volumeProgress, score: entry.score, notes: entry.notes, startedAt: entry.startedAt,
       completedAt: entry.completedAt, repeat: entry.repeatCount };
     return { mediaType: entry.type, status: entry.status, progress: entry.progress, volumeProgress: entry.volumeProgress,
-      score: entry.score == null ? null : entry.score / 10, notes: entry.notes, started_at: entry.startedAt,
+      score: entry.score, notes: entry.notes, started_at: entry.startedAt,
       completed_at: entry.completedAt, repeat_count: entry.repeatCount,
       is_rewatching: entry.isRepeating, is_rereading: entry.isRepeating };
   }

@@ -61,6 +61,7 @@ async function main() {
     await library.mutate(alice.token, request(anime._id, favored.entry.revision, { isFavorite: true }));
     assert.equal((await repo.libraryState.findOne({ _id: alice.user.id })).sequence, beforeNoop.sequence);
     assert.equal((await library.mutate(alice.token, request(anime._id, favored.entry.revision, { volumeProgress: 1 }))).code, 'INVALID_FIELDS');
+    assert.equal((await library.mutate(alice.token, request(anime._id, favored.entry.revision, { score: 10.1 }))).code, 'INVALID_FIELDS');
     assert.equal((await library.mutate(alice.token, request(anime._id, favored.entry.revision, { startedAt: '2026-02-30' }))).code, 'INVALID_FIELDS');
     await library.mutate(alice.token, request(manga._id, 0, { isFavorite: true, volumeProgress: 2, progress: 8 }));
     await library.mutate(alice.token, request(third._id, 0, { isFavorite: true }));

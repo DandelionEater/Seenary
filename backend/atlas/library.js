@@ -22,7 +22,7 @@ function validatePatch(value, type) {
     if (['isFavorite', 'isRepeating'].includes(key) && typeof item !== 'boolean') throw new Error('Invalid flag.');
     if (['progress', 'volumeProgress', 'repeatCount'].includes(key) && (!Number.isSafeInteger(item) || item < 0 || item > 100000000)) throw new Error('Invalid progress.');
     if (key === 'volumeProgress' && type === 'ANIME' && item !== 0) throw new Error('Volumes are only valid for manga.');
-    if (key === 'score' && item !== null && (typeof item !== 'number' || !Number.isFinite(item) || item < 0 || item > 100)) throw new Error('Invalid score.');
+    if (key === 'score' && item !== null && (typeof item !== 'number' || !Number.isFinite(item) || item < 0 || item > 10)) throw new Error('Invalid score.');
     if (key === 'notes' && item !== null && (typeof item !== 'string' || item.length > 10000)) throw new Error('Invalid notes.');
     if (['startedAt', 'completedAt'].includes(key) && item !== null) {
       if (typeof item !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(item) || Number.isNaN(Date.parse(item)) || new Date(item).toISOString().slice(0, 10) !== item) throw new Error('Invalid date.');

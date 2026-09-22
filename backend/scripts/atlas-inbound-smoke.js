@@ -52,7 +52,7 @@ async function scenario(repo, client, media) {
   assert.equal(observedProgress.progress.stage, 'fetching');
   assert.equal((await repo.providerRefreshStates.findOne({ _id: 'link-al' })).progress, undefined);
   let document = await repo.media.findOne({ anilistId: 11 }); let entry = await repo.libraryEntries.findOne({ userId, mediaId: document._id });
-  assert.equal(entry.progress, 4); assert.equal(entry.score, 80); assert.equal(entry.isFavorite, false); assert.equal(entry.revision, 1);
+  assert.equal(entry.progress, 4); assert.equal(entry.score, 8); assert.equal(entry.isFavorite, false); assert.equal(entry.revision, 1);
   assert.equal(await repo.jobs.countDocuments({}), 0, 'inbound reconciliation must not echo into the outbound queue');
   assert.equal((await repo.libraryChanges.findOne({ userId })).source, 'provider:anilist');
   await repo.libraryEntries.updateOne({ userId, mediaId: document._id }, { $set: { inboundSources: {} } });

@@ -26,7 +26,7 @@ async function seed(repo, id, provider, extra = {}) {
   await repo.media.insertOne({ _id: mediaId, type, anilistId: provider === 'anilist' ? providerMediaId : 303, malId: provider === 'mal' ? providerMediaId : 404 });
   await repo.libraryEntries.insertOne({ _id: JSON.stringify([userId, mediaId]), userId, mediaId, type, revision: 1, sequence: 1,
     deleted: extra.operation === 'delete', isFavorite: false, status: 'watching', progress: 12, volumeProgress: 3,
-    repeatCount: 2, isRepeating: true, score: 80, notes: 'private note', startedAt: '2024-01-02', completedAt: null,
+    repeatCount: 2, isRepeating: true, score: 8, notes: 'private note', startedAt: '2024-01-02', completedAt: null,
     createdAt: time, updatedAt: time });
   await repo.jobs.insertOne({ _id: `job-${id}`, kind: 'provider-library', userId, mediaId, provider, providerLinkId: linkId,
     providerLinkRevision: 1, providerMediaId, libraryRevision: 1, operation: extra.operation || 'upsert', status: 'pending',
@@ -61,7 +61,7 @@ async function verify(repo) {
   assert.equal((await delivery.deliver(owned.item)).status, 'succeeded');
   const al = calls.at(-1);
   assert.deepEqual({ status: al.data.status, score: al.data.score, progress: al.data.progress, userId: al.data.userId },
-    { status: 'CURRENT', score: 80, progress: 12, userId: Number(alFixture.providerUserId) });
+    { status: 'CURRENT', score: 8, progress: 12, userId: Number(alFixture.providerUserId) });
   assert.equal(al.token, 'anilist-al-success-access');
   assert(!JSON.stringify(await repo.jobs.findOne({ _id: 'job-al-success' })).includes('private note'));
 

@@ -150,12 +150,14 @@ export function installAtlasRenderer(legacy: Api) {
     });
   }
   const numericId = (media: Media) => media.anilistId ?? -(media.malId!);
+  const normalizedScore = (score: number | null) =>
+    score != null && score > 10 ? Math.round(score) / 10 : score;
   function row(entry: Entry, state: State, pending = state.pending.find(item => item.request.mediaId === entry.mediaId)) {
     const media = state.media[entry.mediaId];
     if (!media) throw new Error('Title identity is not cached yet. Reconnect to finish loading your library.');
     return { ...media.metadata, [entry.type === 'ANIME' ? 'anime_id' : 'manga_id']: numericId(media), seenary_id: entry.mediaId,
       media_type: entry.type, status: entry.status, is_favorite: entry.isFavorite, progress: entry.progress, volume_progress: entry.volumeProgress,
-      score: entry.score, notes: entry.notes, started_at: entry.startedAt, completed_at: entry.completedAt,
+      score: normalizedScore(entry.score), notes: entry.notes, started_at: entry.startedAt, completed_at: entry.completedAt,
       repeat_count: entry.repeatCount, is_rewatching: entry.isRepeating, is_rereading: entry.isRepeating,
       recommendations: media.metadata.recommendations ?? media.sources?.anilist?.details?.recommendations?.nodes ?? [],
       title_preferred: media.metadata.title_preferred || media.metadata.title_english || media.metadata.title_romaji || `${media.anilistId ? 'AniList' : 'MAL'} #${Math.abs(numericId(media))}`,

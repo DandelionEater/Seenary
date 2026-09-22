@@ -36,6 +36,7 @@
     "atlas:providers": "node scripts/atlas-providers.js",
     "atlas:media": "node scripts/atlas-media.js",
     "atlas:library": "node scripts/atlas-library.js",
+    "atlas:normalize-scores": "node scripts/atlas-normalize-scores.js",
     "test:atlas-library": "node scripts/atlas-library-smoke.js",
     "test:atlas-media": "node scripts/atlas-media-smoke.js",
     "test:atlas-providers": "node scripts/atlas-providers-smoke.js",
