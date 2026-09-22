@@ -39,6 +39,7 @@ function createStagingServer(service, providers = null, media = null, library = 
       res.setHeader('Access-Control-Allow-Credentials', 'true');
       res.setHeader('Vary', 'Origin');
     }
+    if (config.analyticsReportHandler && await config.analyticsReportHandler(req, res)) return;
     if (req.method === 'OPTIONS' && req.url === '/rpc') {
       res.setHeader('Access-Control-Allow-Methods', 'POST');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Seenary-Version');

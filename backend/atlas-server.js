@@ -5,6 +5,7 @@ const { connectProduction, reportError } = require('./atlas/connection');
 const { validateDeployment, healthReport } = require('./atlas/operations');
 const { createAtlasApplication } = require('./atlas/application');
 const { createStagingServer } = require('./atlas/stagingServer');
+const { createAnalyticsReportHandler } = require('./atlas/analyticsReports');
 
 async function main() {
   const validation = validateDeployment(process.env, 'production');
@@ -19,6 +20,7 @@ async function main() {
       loopbackOnly: false, secureCookies: true, cookieName: 'seenary_sid', allowedOrigins: origins,
       trustProxy: process.env.TRUST_PROXY === 'true', requestLimit: Number(process.env.RPC_RATE_LIMIT_MAX || 300),
       authLimit: Number(process.env.AUTH_RATE_LIMIT_MAX || 20), windowMs: Number(process.env.RPC_RATE_LIMIT_WINDOW_MS || 60000),
+      analyticsReportHandler: createAnalyticsReportHandler(app.analytics),
       healthCheck: async () => { const report = await healthReport(connection.db); return { ...report, ok: report.ok && workerHealthy, worker: { running: workerHealthy } }; },
     });
     const port = Number(process.env.PORT || 3000);

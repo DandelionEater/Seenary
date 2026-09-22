@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { createStagingServer } = require('../atlas/stagingServer');
+const { createAnalyticsReportHandler } = require('../atlas/analyticsReports');
 
 async function main() {
   const previousMode = process.env.ATLAS_CLIENT_GATE_MODE; const previousMinimum = process.env.ATLAS_MIN_CLIENT_VERSION;
@@ -20,8 +21,11 @@ async function main() {
       return { ok: true, token: 'c'.repeat(64), user: { id: 'cloud-user', username: 'PopupUser' } };
     },
   };
+  const analytics = { report: async () => ({ generatedAt: '2026-09-22T12:00:00.000Z', overview: { days: 14, startDate: '2026-09-09', endDate: '2026-09-22', observedActiveAccounts: 2, registeredAccounts: 3, unavailable: false }, daily: [{ activityDate: '2026-09-22', dailyActiveUsers: 2 }], monthly: [{ month: '2026-09', monthlyActiveUsers: 2, averageActiveDays: 1, dauMau: 1, platformActiveDays: { windows: 2 }, versionActiveDays: { '0.2.1-beta': 2 } }] }) };
+  const reportHandler = createAnalyticsReportHandler(analytics, { ANALYTICS_REPORT_USERNAME: 'reports', ANALYTICS_REPORT_PASSWORD: 'a-secure-report-password' });
   const server = createStagingServer(service, providers, null, null, null, null, { loopbackOnly: false, secureCookies: true,
-    cookieName: 'seenary_sid', allowedOrigins: ['https://seenary.app'], healthCheck: async () => ({ ok: true, storage: { level: 'ok' } }) });
+    cookieName: 'seenary_sid', allowedOrigins: ['https://seenary.app'], analyticsReportHandler: reportHandler,
+    healthCheck: async () => ({ ok: true, storage: { level: 'ok' } }) });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const origin = `http://127.0.0.1:${server.address().port}`;
   try {
@@ -47,7 +51,14 @@ async function main() {
     const callbackHtml = await callback.text();
     assert.match(callback.headers.get('content-type'), /^text\/html/); assert.match(callbackHtml, /seenary:provider-auth-complete/);
     assert.match(callback.headers.get('set-cookie'), /^seenary_sid=/); assert.doesNotMatch(callbackHtml, /"token"|cccccccc/);
-    console.log('PASS: hosted Atlas HTTP shell enforces origins and client versions, exposes safe health, strips session tokens, emits secure cookies, and completes first-party popup authorization.');
+    const reportUnauthorized = await fetch(`${origin}/reports`); assert.equal(reportUnauthorized.status, 401);
+    assert.match(reportUnauthorized.headers.get('www-authenticate'), /Seenary Analytics/);
+    const reportHeaders = { Authorization: `Basic ${Buffer.from('reports:a-secure-report-password').toString('base64')}` };
+    const report = await fetch(`${origin}/reports`, { headers: reportHeaders }); const reportHtml = await report.text();
+    assert.equal(report.status, 200); assert.match(report.headers.get('content-type'), /^text\/html/); assert.match(reportHtml, /Engagement reports/); assert.match(reportHtml, /Registered accounts/);
+    const reportCsv = await fetch(`${origin}/reports/download/overview.csv`, { headers: reportHeaders });
+    assert.equal(reportCsv.status, 200); assert.match(await reportCsv.text(), /total_registered_accounts/);
+    console.log('PASS: hosted Atlas HTTP shell enforces origins and client versions, exposes safe health and protected reports, strips session tokens, emits secure cookies, and completes first-party popup authorization.');
   } finally {
     await new Promise(resolve => server.close(resolve));
     if (previousMode === undefined) delete process.env.ATLAS_CLIENT_GATE_MODE; else process.env.ATLAS_CLIENT_GATE_MODE = previousMode;
