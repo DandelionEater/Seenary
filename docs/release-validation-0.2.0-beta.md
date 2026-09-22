@@ -1,6 +1,6 @@
 # Seenary 0.2.0-beta release validation
 
-Validation date: 2026-09-21
+Validation date: 2026-09-22
 
 ## Automated evidence
 
@@ -15,14 +15,18 @@ Validation date: 2026-09-21
 ## Manual evidence already recorded
 
 - Local AniList connection completed successfully during Atlas cutover testing.
-- The migrated hosted account authenticated and loaded its 585-entry imported snapshot.
+- Local MyAnimeList authorization completed successfully through the system browser.
+- AniList and MyAnimeList username previews loaded the expected public Anime and Manga lists.
+- AniList and MyAnimeList account pulls completed and hydrated titles that previously appeared as numeric placeholders.
+- The migrated account authenticated and restored its cloud library after the Atlas migration.
 - The hosted production frontend selected the Atlas API after deployment of the updated static bundle.
 
 ## Final checks before publishing
 
 - [ ] Complete an AniList OAuth callback from the production web app and confirm the intended Seenary account remains active.
 - [ ] Complete a MyAnimeList OAuth callback from the production web app and confirm both provider links appear independently.
-- [ ] Pull the current roughly 606-entry AniList library and confirm the 585-entry migrated snapshot is enriched without deleting Seenary-only data or favorites.
+- [ ] Verify one automatic AniList push and one automatic MyAnimeList push, including status, progress, score, dates, repeat state, and delivery time.
+- [ ] Verify add, edit, status change, completion, repeat, and deletion behavior survives restart and reconciles without duplicates.
 - [ ] Install `Seenary-Setup-0.2.0-beta.exe` on a clean profile and complete login, library edit, offline/reconnect, and restart checks.
 - [ ] Upgrade an existing 0.1.x installation and confirm settings, local recovery data, account session, and updater restart behavior.
 - [ ] Check compact-window overflow, keyboard focus order, visible focus, screen-reader labels, and representative empty/loading/warning/error states.

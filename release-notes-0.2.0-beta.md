@@ -25,13 +25,20 @@ Existing favorites that were stored only on one device before this migration may
 
 ### AniList and MyAnimeList synchronization
 
+- Desktop authorization now opens in your normal web browser, where existing sessions and saved passwords remain available.
+- Signing in with a provider now checks for an existing Seenary account first and asks for a Seenary username only when a new account is required.
+- AniList and MyAnimeList connections, imports, pulls, and progress are shown independently when both services are linked.
 - Existing AniList and MyAnimeList connections were carried into the new account system.
 - Manual provider updates now run safely in the background, including large first-time reconciliations.
+- Provider updates show live fetching, matching, metadata, and reconciliation progress instead of an indefinite loading state.
 - Repeated update requests reuse work already in progress instead of starting duplicate pulls.
 - Incoming provider entries are appended or merged without deleting Seenary-only titles.
+- Imported provider titles now receive their names, artwork, and other available public information instead of remaining as numeric placeholders.
 - Newer Seenary edits are protected from older provider data.
 - AniList remains the preferred source when both AniList and MyAnimeList information is available.
 - Provider delivery uses durable background jobs with retry handling, ordering, deduplication, and protection against older retries overwriting newer progress.
+- Personal scores now use one decimal 0-to-10 scale throughout Seenary, AniList, and MyAnimeList synchronization.
+- Queued edits wait for 10 quiet seconds before uploading; another edit restarts that timer so related changes can travel together.
 - Idle automatic-sync checks stay silent and do not report meaningless “0 changes synced” notifications.
 - Provider update notifications now distinguish between an update starting and actually completing.
 
@@ -55,6 +62,13 @@ Existing favorites that were stored only on one device before this migration may
 - Account data and pending changes remain isolated when multiple accounts use the same device.
 - Full snapshots and incremental updates keep large libraries synchronized without replacing the entire local database on every refresh.
 - Bulk clearing, backup imports, and restores use the same cloud conflict protections as normal edits.
+- Provider username imports prepare selected entries for review in Cloud saves before anything is uploaded to the active account.
+
+### Interface improvements
+
+- Synchronization controls use compact rows with clear actions, contextual icons, visible progress, and loading feedback for slower account changes.
+- Discover loading now mirrors the finished page with a full-width trending carousel and responsive shelf placeholders.
+- Provider completion messages clear correctly and distinguish updated entries from titles that were already current.
 
 ### Privacy, account controls, and recovery
 
@@ -81,6 +95,12 @@ Existing favorites that were stored only on one device before this migration may
 - Fixed a hosted login failure caused by the cloud renderer selecting a local development endpoint.
 - Fixed empty and misleading background-import notifications after cloud refreshes.
 - Fixed repeated zero-change automatic-sync notifications.
+- Fixed desktop provider authorization closing before Seenary received the successful browser callback.
+- Fixed desktop provider login opening an isolated window instead of the user's default browser.
+- Fixed linked-provider libraries showing numeric AniList or MyAnimeList placeholders after an update.
+- Fixed imported scores appearing as values such as 80 out of 10.
+- Fixed local edits sometimes waiting for the next one-minute polling interval before entering the provider queue.
+- Fixed noisy idle worker output during local desktop use.
 
 ## Migration notes
 
@@ -88,3 +108,4 @@ Existing favorites that were stored only on one device before this migration may
 - The migration preserves Seenary-only entries when a connected provider has fewer titles.
 - A protected recovery copy of pre-migration data is being retained during the beta transition.
 - The first provider reconciliation after updating may take several minutes for a large library; it continues in the background.
+- Existing cloud scores are converted automatically to the normalized 0-to-10 scale.
