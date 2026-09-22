@@ -6005,7 +6005,7 @@ function SyncActivityModal({
                   {(item.message || item.last_error) && (() => {
                     const isFailure = item.status === "failed" || Boolean(item.last_error);
                     const isPartial = item.status === "partial";
-                    const isPull = item.operation.startsWith("pull_");
+                    const isPull = isLibraryPullOperation(item.operation);
                     return (
                     <div
                       className={`mt-4 rounded-2xl border px-3 py-2 text-sm ${
@@ -6955,6 +6955,10 @@ function getSyncActivityTabLabel(tab: SyncActivityTab) {
 }
 
 function getSyncActivityTitle(item: SyncActivityItem, titleLanguage: TitleLanguage) {
+  if (isLibraryPullOperation(item.operation) && !item.anime_id && !item.manga_id) {
+    return `${formatOperationProvider(item.operation)} library update`;
+  }
+
   const fallback =
     item.animeTitle ||
     item.anime_title ||
@@ -7040,6 +7044,11 @@ function ProgressActionButton({
 
 function formatOperation(value: string) {
   switch (value) {
+    case "pull-anilist":
+    case "pull-mal":
+    case "pull_summary_anilist":
+    case "pull_summary_mal":
+      return "Library update";
     case "upsert_anilist_entry":
       return "Pushed list entry";
     case "upsert_mal_entry":
@@ -7061,14 +7070,15 @@ function formatOperation(value: string) {
     case "pull_from_anilist_unmapped":
     case "pull_from_mal_unmapped":
       return "Pull mapping conflict";
-    case "pull_summary_anilist":
-    case "pull_summary_mal":
-      return "Pull summary";
     default:
       return value
         .replace(/_/g, " ")
         .replace(/^./, (char) => char.toUpperCase());
   }
+}
+
+function isLibraryPullOperation(value: string) {
+  return value.startsWith("pull-") || value.startsWith("pull_");
 }
 
 function formatOperationProvider(value: string) {
@@ -7117,6 +7127,34 @@ function formatValue(value: unknown) {
 
 function formatSyncActivityMessage(value: string | null | undefined) {
   const message = String(value || "").trim();
+
+  if (message.startsWith("{") && message.endsWith("}")) {
+    try {
+      const details = JSON.parse(message) as {
+        applied?: unknown;
+        skipped?: unknown;
+        review?: unknown;
+      };
+      const applied = Number(details.applied);
+      const skipped = Number(details.skipped);
+      const review = Number(details.review);
+      const parts: string[] = [];
+
+      if (Number.isFinite(applied)) {
+        parts.push(`${applied} ${applied === 1 ? "entry" : "entries"} updated`);
+      }
+      if (Number.isFinite(skipped)) {
+        parts.push(`${skipped} already current`);
+      }
+      if (Number.isFinite(review) && review > 0) {
+        parts.push(`${review} ${review === 1 ? "entry needs" : "entries need"} review`);
+      }
+
+      return parts.length > 0 ? `${parts.join(" · ")}.` : "Library update completed.";
+    } catch {
+      return "Library update completed.";
+    }
+  }
 
   if (message.toLowerCase() === "invalid q") {
     return "MyAnimeList rejected the title search query while matching this title.";
