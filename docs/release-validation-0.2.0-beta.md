@@ -19,6 +19,8 @@ Validation date: 2026-09-22
 - Local MyAnimeList authorization completed successfully through the system browser.
 - AniList and MyAnimeList username previews loaded the expected public Anime and Manga lists.
 - AniList and MyAnimeList account pulls completed and hydrated titles that previously appeared as numeric placeholders.
+- Automatic AniList and MyAnimeList pushes delivered the expected list fields within an acceptable delay.
+- Adding, editing, changing status, completing, repeating, deleting, restarting, and reconciling list entries produced the expected results without duplicates.
 - The migrated account authenticated and restored its cloud library after the Atlas migration.
 - The hosted production frontend selected the Atlas API after deployment of the updated static bundle.
 
@@ -26,8 +28,8 @@ Validation date: 2026-09-22
 
 - [ ] Complete an AniList OAuth callback from the production web app and confirm the intended Seenary account remains active.
 - [ ] Complete a MyAnimeList OAuth callback from the production web app and confirm both provider links appear independently.
-- [ ] Verify one automatic AniList push and one automatic MyAnimeList push, including status, progress, score, dates, repeat state, and delivery time.
-- [ ] Verify add, edit, status change, completion, repeat, and deletion behavior survives restart and reconciles without duplicates.
+- [x] Verify one automatic AniList push and one automatic MyAnimeList push, including status, progress, score, dates, repeat state, and delivery time.
+- [x] Verify add, edit, status change, completion, repeat, and deletion behavior survives restart and reconciles without duplicates.
 - [ ] Install `Seenary-Setup-0.2.0-beta.exe` on a clean profile and complete login, library edit, offline/reconnect, and restart checks.
 - [ ] Upgrade an existing 0.1.x installation and confirm settings, local recovery data, account session, and updater restart behavior.
 - [ ] Check compact-window overflow, keyboard focus order, visible focus, screen-reader labels, and representative empty/loading/warning/error states.
