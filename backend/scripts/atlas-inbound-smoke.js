@@ -39,13 +39,16 @@ const malPayload = (id, type) => ({ data: [{ node: { id, title: 'Mapped title' }
 
 async function scenario(repo, client, media) {
   let clock = 1700000000000; const userId = await link(repo, 'al', 'anilist'); let pullCalls = 0;
-  let observedProgress;
+  let observedProgress; const hydratedAniList = [];
   const adapters = { refresh: async () => { throw new Error('unexpected'); }, mapMal: async () => [],
     pull: async (_provider, token, type) => { assert.equal(token, 'al-access'); pullCalls++;
       observedProgress = await repo.providerRefreshStates.findOne({ _id: 'link-al' });
       return type === 'ANIME' ? alPayload(11) : { lists: [] }; } };
-  let inbound = createProviderInbound({ client, repo, media, cipher, adapters, now: () => clock, spacing: { anilist: 0, mal: 0 } });
+  let inbound = createProviderInbound({ client, repo, media, cipher, adapters, metadata: {
+    anilist: async (raw, type) => hydratedAniList.push([raw.id, type]),
+  }, now: () => clock, spacing: { anilist: 0, mal: 0 } });
   let result = await inbound.runOnce(1); assert.equal(result.results[0].status, 'succeeded'); assert.equal(pullCalls, 2);
+  assert.deepEqual(hydratedAniList, [[11, 'ANIME']], 'AniList pull hydrates public card metadata');
   assert.equal(observedProgress.progress.stage, 'fetching');
   assert.equal((await repo.providerRefreshStates.findOne({ _id: 'link-al' })).progress, undefined);
   let document = await repo.media.findOne({ anilistId: 11 }); let entry = await repo.libraryEntries.findOne({ userId, mediaId: document._id });
@@ -102,15 +105,21 @@ async function scenario(repo, client, media) {
   assert.equal(await repoUnlink.libraryEntries.countDocuments({}), 0, 'unlink during a pull prevents later reconciliation');
 
   const repoMal = localRepo(); const malUser = await link(repoMal, 'mal', 'mal'); let mappedBatches = 0; const mappingProgress = [];
+  const hydratedMal = []; const hydratedMappings = [];
   const malAdapters = { refresh: async () => ({ access_token: 'new' }), pull: async (_provider, token, type) => {
     assert.equal(token, 'mal-access'); return malPayload(type === 'ANIME' ? 21 : 22, type);
   }, mapMal: async (type, ids) => { mappedBatches++;
     mappingProgress.push((await repoMal.providerRefreshStates.findOne({ _id: 'link-mal' })).progress);
     return ids.map(id => ({ id: id + 100, idMal: id, type })); } };
-  inbound = createProviderInbound({ client: fakeClient, repo: repoMal, media: localMedia(repoMal), cipher, adapters: malAdapters,
+  inbound = createProviderInbound({ client: fakeClient, repo: repoMal, media: localMedia(repoMal), cipher, adapters: malAdapters, metadata: {
+    anilist: async (raw, type) => hydratedMappings.push([raw.id, raw.idMal, type]),
+    mal: async (raw, type) => hydratedMal.push([raw.id, raw.title, type]),
+  },
     now: () => clock, spacing: { anilist: 0, mal: 0 } });
   result = await inbound.runOnce(1); assert.equal(result.results[0].counts.applied, 2); assert.equal(mappedBatches, 2);
   assert.deepEqual(mappingProgress.map(progress => [progress.stage, progress.current, progress.total]), [['mapping', 0, 2], ['mapping', 1, 2]]);
+  assert.deepEqual(hydratedMappings, [[121, 21, 'ANIME'], [122, 22, 'MANGA']]);
+  assert.deepEqual(hydratedMal, [[21, 'Mapped title', 'ANIME'], [22, 'Mapped title', 'MANGA']]);
   assert.equal((await repoMal.media.findOne({ type: 'ANIME', malId: 21 })).anilistId, 121);
   assert.equal((await repoMal.libraryEntries.findOne({ userId: malUser, type: 'MANGA' })).volumeProgress, 2);
   console.log('PASS: scheduled AL/MAL pulls, normalized inbound fields, bulk exact MAL mapping, ordered CAS reconciliation, favorite preservation, and no outbound echo.');

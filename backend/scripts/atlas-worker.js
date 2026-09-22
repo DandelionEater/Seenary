@@ -6,7 +6,8 @@ const { connectRuntime, reportError } = require('../atlas/connection');
 const { setupLibrary } = require('../atlas/librarySchema');
 const { setupProviders } = require('../atlas/providerSchema');
 const { setupMedia, createMediaService } = require('../atlas/media');
-const { setupMetadata } = require('../atlas/metadata');
+const { setupMetadata, createMetadataService } = require('../atlas/metadata');
+const { createMalMetadataService } = require('../atlas/malMetadata');
 const { createTokenCipher } = require('../atlas/tokenCipher');
 const { createProviderAdapters } = require('../atlas/providerAdapters');
 const { createJobWorker } = require('../atlas/jobWorker');
@@ -33,11 +34,17 @@ async function main() {
     const repo = { ...library, ...providers, ...mediaRepo, providerBudgets: library.providerBudgets,
       providerRefreshStates: library.providerRefreshStates };
     const worker = createJobWorker({ repo });
+    const mediaService = createMediaService(connection.client, repo);
+    const atlasMetadata = createMetadataService({ media: mediaService, repo, queries, provider: null, requestSpacingMs: 0 });
+    const malMetadata = createMalMetadataService({ media: mediaService, repo });
     const tokenCipher = createTokenCipher(process.env.TOKEN_ENCRYPTION_KEY); const providerAdapters = createProviderAdapters();
     const delivery = createProviderDelivery({ repo, worker, cipher: tokenCipher,
       adapters: createDeliveryAdapters({ anilist, mal, providerAdapters }) });
-    const inbound = createProviderInbound({ client: connection.client, repo, media: createMediaService(connection.client, repo), cipher: tokenCipher,
-      adapters: createInboundAdapters({ anilist, mal, providerAdapters }) });
+    const inbound = createProviderInbound({ client: connection.client, repo, media: mediaService, cipher: tokenCipher,
+      adapters: createInboundAdapters({ anilist, mal, providerAdapters }), metadata: {
+        anilist: (raw, type, observedAt) => atlasMetadata.ingest(raw, type, 'card', observedAt),
+        mal: (raw, type, observedAt) => malMetadata.ingest(raw, type, 'card', observedAt),
+      } });
     const maintenance = createCacheMaintenance({ queries }); let lastMaintenance = 0;
     const byteBudget = values.maintenance ? Number(process.env.ATLAS_QUERY_CACHE_BYTE_BUDGET) : Number.POSITIVE_INFINITY;
     if (values.maintenance && (!Number.isSafeInteger(byteBudget) || byteBudget < 0)) throw new Error('Configure ATLAS_QUERY_CACHE_BYTE_BUDGET.');

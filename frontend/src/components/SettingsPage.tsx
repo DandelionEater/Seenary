@@ -349,7 +349,7 @@ type SyncActivityItem = {
 };
 type SyncProgressEvent = {
   operation: "manual-sync" | "pull-anilist" | "pull-mal";
-  stage: "queued" | "starting" | "fetching" | "mapping" | "reconciling" | "saving" | "processing" | "complete" | "failed";
+  stage: "queued" | "starting" | "fetching" | "hydrating" | "mapping" | "reconciling" | "saving" | "processing" | "complete" | "failed";
   label: string;
   current?: number | null;
   total?: number | null;

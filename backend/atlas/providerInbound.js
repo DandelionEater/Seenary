@@ -27,7 +27,7 @@ function normalize(provider, type, payload) {
     const repeatCount = provider === 'anilist' ? personal.repeat : type === 'ANIME' ? personal.num_times_rewatched : personal.num_times_reread;
     const score = personal.score == null ? null : Number(personal.score) * 10;
     result.push({ providerId, malId: provider === 'anilist' && Number.isSafeInteger(media.idMal) && media.idMal > 0 ? media.idMal : null,
-      type, remoteUpdatedAt: remoteTime(provider === 'anilist' ? personal.updatedAt : personal.updated_at), fields: {
+      type, publicMedia: media, remoteUpdatedAt: remoteTime(provider === 'anilist' ? personal.updatedAt : personal.updated_at), fields: {
         status, progress: Number.isSafeInteger(progress) && progress >= 0 ? progress : 0,
         volumeProgress: type === 'MANGA' && Number.isSafeInteger(volumeProgress) && volumeProgress >= 0 ? volumeProgress : 0,
         score: Number.isFinite(score) && score >= 0 && score <= 100 ? score : null,
@@ -42,7 +42,7 @@ function normalize(provider, type, payload) {
   return result;
 }
 
-function createProviderInbound({ client, repo, media, cipher, adapters, now = () => Date.now(), spacing, intervalMs = 6 * 3600000 }) {
+function createProviderInbound({ client, repo, media, cipher, adapters, metadata = {}, now = () => Date.now(), spacing, intervalMs = 6 * 3600000 }) {
   const budget = createProviderBudget({ collection: repo.providerBudgets, now, spacing });
   async function reserve(provider) { const slot = await budget.reserve(provider); if (!slot.ok) throw Object.assign(new Error('Budget busy'), { code: 'PROVIDER_BUDGET', retryAfter: slot.retryAfter }); }
   async function seed(limit = 100) {
@@ -143,6 +143,15 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
         const access = await token(link); link = await repo.providerAccounts.findOne({ _id: link._id });
         const all = [];
         for (const type of ['ANIME', 'MANGA']) { await reserve(link.provider); all.push(...normalize(link.provider, type, await adapters.pull(link.provider, access, type, link.providerUserId))); }
+        if (link.provider === 'anilist' && metadata.anilist) {
+          await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
+            { $set: { progress: { stage: 'hydrating', current: 0, total: all.length, updatedAt: new Date(now()) } } });
+          for (let index = 0; index < all.length; index++) {
+            await metadata.anilist(all[index].publicMedia, all[index].type, observedAt);
+            if ((index + 1) % 10 === 0 || index + 1 === all.length) await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
+              { $set: { progress: { stage: 'hydrating', current: index + 1, total: all.length, updatedAt: new Date(now()) } } });
+          }
+        }
         if (link.provider === 'mal') {
           let mapped = 0;
           await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
@@ -152,7 +161,11 @@ function createProviderInbound({ client, repo, media, cipher, adapters, now = ()
             for (let offset = 0; offset < ids.length; offset += 50) {
               await reserve('anilist'); const rows = await adapters.mapMal(type, ids.slice(offset, offset + 50));
               const byMal = new Map((rows || []).filter(row => row.type === type && Number.isSafeInteger(row.idMal)).map(row => [row.idMal, row]));
-              for (const item of items.slice(offset, offset + 50)) item.mapping = byMal.get(item.providerId) || null;
+              for (const item of items.slice(offset, offset + 50)) {
+                item.mapping = byMal.get(item.providerId) || null;
+                if (item.mapping && metadata.anilist) await metadata.anilist(item.mapping, type, observedAt);
+                if (metadata.mal) await metadata.mal(item.publicMedia, type, observedAt);
+              }
               mapped += Math.min(50, ids.length - offset);
               await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
                 { $set: { progress: { stage: 'mapping', current: mapped, total: all.length, updatedAt: new Date(now()) } } });

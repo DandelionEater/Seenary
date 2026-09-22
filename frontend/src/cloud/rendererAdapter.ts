@@ -319,6 +319,7 @@ export function installAtlasRenderer(legacy: Api) {
             queued: `Waiting for the ${providerLabel} worker…`,
             starting: `Starting ${providerLabel} update…`,
             fetching: `Downloading Anime and Manga lists from ${providerLabel}…`,
+            hydrating: `Saving ${providerLabel} titles and artwork…`,
             mapping: `Matching MyAnimeList titles to Seenary…`,
             reconciling: `Reconciling ${providerLabel} library…`,
           };
