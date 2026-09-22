@@ -9,6 +9,7 @@ type Api = typeof window.api;
 const endpoint = atlasEndpoint;
 const storage = browserStorage(endpoint);
 const sessionKey = `seenary-atlas-renderer-session:${endpoint}`;
+const PENDING_UPLOAD_DELAY_MS = 10_000;
 type SessionUser = { id: string; username: string; [key: string]: unknown };
 type AccountReply = Omit<Reply, 'user'> & {
   user?: SessionUser;
@@ -51,12 +52,17 @@ export function installAtlasRenderer(legacy: Api) {
       ? new CustomEvent('seenary:local-library-updated', { detail })
       : new Event('seenary:local-library-updated')
   );
+  function cancelPendingUpload() {
+    if (pendingUploadTimer === null) return;
+    window.clearTimeout(pendingUploadTimer);
+    pendingUploadTimer = null;
+  }
   function schedulePendingUpload() {
-    if (pendingUploadTimer !== null) window.clearTimeout(pendingUploadTimer);
+    cancelPendingUpload();
     pendingUploadTimer = window.setTimeout(() => {
       pendingUploadTimer = null;
       void tick();
-    }, 1500);
+    }, PENDING_UPLOAD_DELAY_MS);
   }
   async function rpc(method: string, args: unknown[] = [], expectedUserId?: string): Promise<AccountReply> {
     const wait = Math.max(0, lastRequest + 650 - Date.now()); lastRequest = Date.now() + wait;
@@ -120,10 +126,7 @@ export function installAtlasRenderer(legacy: Api) {
     user = value;
     preferenceId = null;
     if (!value) {
-      if (pendingUploadTimer !== null) {
-        window.clearTimeout(pendingUploadTimer);
-        pendingUploadTimer = null;
-      }
+      cancelPendingUpload();
       localStorage.removeItem(sessionKey);
       localStorage.removeItem(`seenary-cloud-user:${endpoint}`);
       notify();
@@ -244,6 +247,7 @@ export function installAtlasRenderer(legacy: Api) {
       const before = (await client.read()).pending.length;
       await client.flush(); await client.refresh(); refreshNeeded = false; notify();
       const state = await client.read();
+      if (!state.pending.length) cancelPendingUpload();
       return { ok: true, synced: before - state.pending.length, pending: state.pending.length, failed: state.pending.filter(item => item.error).length,
         message: state.pending.length ? 'Some cloud edits need review. Open Cloud saves.' : 'Library saved in Atlas. Provider delivery runs separately.' };
     });
