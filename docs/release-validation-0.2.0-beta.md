@@ -4,13 +4,14 @@ Validation date: 2026-09-22
 
 ## Automated evidence
 
-- Release readiness: 20 passed, 0 failed, with the expected dirty-working-tree warning before commit.
+- Release readiness: 21 passed, 0 failed, and 0 warnings on a clean working tree.
 - Frontend: TypeScript production build and ESLint passed.
 - Data: fresh account/authentication and legacy SQLite migration smokes passed.
 - Reliability: updater configuration, AnimeThemes mapping, MyAnimeList pipeline, cache maintenance, cached-detail fallback, analytics, and security smokes passed.
 - Atlas client: the hidden Chromium journey previously passed session recovery, account isolation, offline queue recovery, favorites, conflict resolution, imports, metadata fallbacks, privacy export, and password-confirmed deletion.
 - Packaging: `Seenary-Setup-0.2.0-beta.exe`, its blockmap, `latest.yml`, and embedded release notes were generated successfully.
 - Artifact integrity: update-metadata filename, version, byte size, and SHA-512 match the installer; the packaged frontend contains the production API endpoint and production Atlas identity and contains no staging label.
+- Current Windows candidate: `Seenary-Setup-0.2.0-beta.exe`, 133,614,080 bytes, SHA-256 `8c2e225033a4242864a41d89942c28ccbb49203c62d40edf9586da3ecc2db920`.
 
 ## Manual evidence already recorded
 
