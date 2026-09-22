@@ -4261,7 +4261,7 @@ export function SettingsPage({
               title="Import & Data"
               scope="Account and portable"
               description="Bring anime data into the app and manage local list data."
-              summary={["Portable backups", "AniList import", "Clear lists"]}
+              summary={["Portable backups", "AniList and MAL import", "Clear lists"]}
               open={openSection === "data"}
               onToggle={() => toggleSection("data")}
             >
@@ -4467,8 +4467,8 @@ export function SettingsPage({
                   </div>
 
                   <p className="mt-4 text-sm leading-6 text-white/45">
-                    This imports anime statuses, progress, score, notes, and cached title data.
-                    Existing local entries with the same AniList anime id are updated. Nothing gets deleted.
+                    This imports Anime and Manga statuses, progress, scores, notes, and cached title data.
+                    Existing local entries with the same AniList identity are updated. Nothing gets deleted.
                   </p>
 
                   <div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-300/8 px-4 py-3">
@@ -4534,7 +4534,7 @@ export function SettingsPage({
 
                   <div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-300/8 px-4 py-3">
                     <p className="text-sm leading-6 text-white/70">
-                      The MAL list must be public. Anime and Manga are matched to canonical AniList records before import, so entries without a safe match may be skipped. Private-list access and ongoing synchronization still require linking the account.
+                      The MAL list must be public. Anime and Manga are matched to canonical AniList records when a verified match exists. Unmatched titles keep their MAL identity and metadata. Private-list access and ongoing synchronization still require linking the account.
                     </p>
                   </div>
 
