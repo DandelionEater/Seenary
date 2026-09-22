@@ -15,6 +15,7 @@ const isDesktopRuntime = Boolean(
 
 const useAtlas = isAtlasProduction
   || import.meta.env.VITE_ATLAS_STAGING === 'true' && ['localhost', '127.0.0.1'].includes(location.hostname)
+const showCloudSaveIndicator = import.meta.env.VITE_ATLAS_STAGING === 'true'
 
 if (useAtlas) {
   if (new URLSearchParams(location.search).has('atlasReview')) {
@@ -23,9 +24,15 @@ if (useAtlas) {
     })
   } else {
     installApiClient()
-    void Promise.all([import('./cloud/rendererAdapter.ts'), import('./cloud/CloudSaveIndicator.tsx')]).then(([{ installAtlasRenderer }, { default: CloudSaveIndicator }]) => {
+    void import('./cloud/rendererAdapter.ts').then(({ installAtlasRenderer }) => {
       installAtlasRenderer(window.legacyApi ?? window.api)
-      ReactDOM.createRoot(document.getElementById('root')!).render(<><App /><CloudSaveIndicator /></>)
+      if (showCloudSaveIndicator) {
+        void import('./cloud/CloudSaveIndicator.tsx').then(({ default: CloudSaveIndicator }) => {
+          ReactDOM.createRoot(document.getElementById('root')!).render(<><App /><CloudSaveIndicator /></>)
+        })
+        return
+      }
+      ReactDOM.createRoot(document.getElementById('root')!).render(<App />)
     })
   }
 } else if (isHostedDesktopRenderer && !isDesktopRuntime) {
