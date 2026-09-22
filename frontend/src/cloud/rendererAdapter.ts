@@ -43,6 +43,7 @@ export function installAtlasRenderer(legacy: Api) {
   const listeners = new Set<(result: unknown) => void>();
   const progressListeners = new Set<(result: unknown) => void>();
   let syncRunning = false;
+  let pendingUploadTimer: number | null = null;
   let lastRequest = 0;
   const importPreviews = new Map<string, ImportPreview>();
   const notify = (detail?: { ok: boolean; provider: string; message: string }) => window.dispatchEvent(
@@ -50,6 +51,13 @@ export function installAtlasRenderer(legacy: Api) {
       ? new CustomEvent('seenary:local-library-updated', { detail })
       : new Event('seenary:local-library-updated')
   );
+  function schedulePendingUpload() {
+    if (pendingUploadTimer !== null) window.clearTimeout(pendingUploadTimer);
+    pendingUploadTimer = window.setTimeout(() => {
+      pendingUploadTimer = null;
+      void tick();
+    }, 1500);
+  }
   async function rpc(method: string, args: unknown[] = [], expectedUserId?: string): Promise<AccountReply> {
     const wait = Math.max(0, lastRequest + 650 - Date.now()); lastRequest = Date.now() + wait;
     await new Promise(resolve => setTimeout(resolve, wait));
@@ -112,6 +120,10 @@ export function installAtlasRenderer(legacy: Api) {
     user = value;
     preferenceId = null;
     if (!value) {
+      if (pendingUploadTimer !== null) {
+        window.clearTimeout(pendingUploadTimer);
+        pendingUploadTimer = null;
+      }
       localStorage.removeItem(sessionKey);
       localStorage.removeItem(`seenary-cloud-user:${endpoint}`);
       notify();
@@ -221,6 +233,7 @@ export function installAtlasRenderer(legacy: Api) {
         await client.queue(media._id, patch, action, false, seenRevisions.get(`${type}:${id}`));
         seenRevisions.delete(`${type}:${id}`);
         notify();
+        schedulePendingUpload();
         const updated = await client.read();
         return { ok: true, message: 'Saved on this device; queued for Atlas.', entry: row(overlay(updated)[media._id], updated) };
       });
@@ -244,6 +257,7 @@ export function installAtlasRenderer(legacy: Api) {
         if (state.pending.some(item => entries.some(entry => entry.mediaId === item.request.mediaId))) throw new Error('Sync or review pending edits before clearing this list.');
         for (const item of entries) state.pending.push({ request: { operationId: crypto.randomUUID(), mediaId: item.mediaId, expectedRevision: item.revision, action: 'delete' } });
         await storage.write(client.userId, state); notify();
+        schedulePendingUpload();
         return { ok: true, removedCount: entries.length, message: 'Deletions queued for Atlas.' };
       });
     } catch (error) { return { ok: false, message: String(error) }; }
@@ -573,8 +587,12 @@ export function installAtlasRenderer(legacy: Api) {
     if (publicReads.has(name)) return Reflect.get(legacy, property);
     return async () => { throw new Error(`Unsupported Seenary API method: ${name}`); };
   } });
-  const tick = async () => {
-    if (!user || syncRunning) return;
+  async function tick() {
+    if (!user) return;
+    if (syncRunning) {
+      schedulePendingUpload();
+      return;
+    }
     syncRunning = true;
     try {
       const state = await load();
@@ -586,7 +604,7 @@ export function installAtlasRenderer(legacy: Api) {
     }
     catch { /* Pending requests remain durable; the Cloud saves panel exposes their status. */ }
     finally { syncRunning = false; }
-  };
+  }
   window.addEventListener('online', () => void tick());
   window.setInterval(() => void tick(), 60000);
 }
