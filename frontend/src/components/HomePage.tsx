@@ -2089,7 +2089,10 @@ export function HomePage({
             />
 
             {isDiscoverLoading && !privacySafeDiscoverShelves.length ? (
-              <DiscoverShelvesSkeleton density={discoverDensity} />
+              <DiscoverShelvesSkeleton
+                density={discoverDensity}
+                showTrendingCarousel={showTrendingCarousel}
+              />
             ) : privacySafeDiscoverShelves.length ? (
               <>
                 {discoverError && (
@@ -3673,7 +3676,13 @@ function DiscoverAnimeCard({
   );
 }
 
-function DiscoverShelvesSkeleton({ density }: { density: DiscoverDensity }) {
+function DiscoverShelvesSkeleton({
+  density,
+  showTrendingCarousel,
+}: {
+  density: DiscoverDensity;
+  showTrendingCarousel: boolean;
+}) {
   const cardCount = density === "compact" ? 7 : density === "balanced" ? 6 : 5;
   const gridClass =
     density === "compact"
@@ -3684,6 +3693,8 @@ function DiscoverShelvesSkeleton({ density }: { density: DiscoverDensity }) {
 
   return (
     <div className="space-y-6" aria-busy="true" aria-label="Loading discovery shelves">
+      {showTrendingCarousel && <TrendingCarouselSkeleton />}
+
       {Array.from({ length: 3 }).map((_, shelfIndex) => (
         <section
           key={shelfIndex}
