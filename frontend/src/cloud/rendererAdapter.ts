@@ -140,10 +140,10 @@ export function installAtlasRenderer(legacy: Api) {
       return result;
     });
   }
-  async function load() {
+  async function load(refreshMedia = false) {
     return operate(async client => {
-      if (refreshNeeded) {
-        try { await client.refresh(); refreshNeeded = false; }
+      if (refreshNeeded || refreshMedia) {
+        try { await client.refresh({ refreshMedia }); refreshNeeded = false; }
         catch (error) { if (!(await client.read()).cursor) throw error; }
       }
       return client.read();
@@ -330,7 +330,7 @@ export function installAtlasRenderer(legacy: Api) {
         const completedAt = Date.parse(String(status.sync?.lastSuccessAt || ''));
         if (Number.isFinite(completedAt) && completedAt >= requestedAt) {
           refreshNeeded = true;
-          await load();
+          await load(true);
           const counts = status.sync?.counts;
           const label = provider === 'anilist' ? 'AniList' : 'MyAnimeList';
           notify({ ok: true, provider: label,

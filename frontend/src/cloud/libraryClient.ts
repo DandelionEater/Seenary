@@ -30,7 +30,7 @@ export class LibraryClient {
   readonly rpc: Rpc;
   constructor(userId: string, storage: Storage, rpc: Rpc) { this.userId = userId; this.storage = storage; this.rpc = rpc; }
   async read() { return await this.storage.read(this.userId) ?? emptyState(); }
-  async refresh() {
+  async refresh(options: { refreshMedia?: boolean } = {}) {
     const state = await this.read();
     if (state.cursor) {
       let cursor = state.cursor;
@@ -57,9 +57,9 @@ export class LibraryClient {
     }
     // Commit the cursor with the corresponding entries, never midway through a snapshot.
     await this.storage.write(this.userId, state);
-    const missing = Object.keys(state.entries).filter(id => !state.media[id]);
-    for (let i = 0; i < missing.length; i += 50) {
-      const reply = checked(await this.rpc('getLibraryMedia', [missing.slice(i, i + 50)], this.userId));
+    const mediaIds = Object.keys(state.entries).filter(id => options.refreshMedia || !state.media[id]);
+    for (let i = 0; i < mediaIds.length; i += 50) {
+      const reply = checked(await this.rpc('getLibraryMedia', [mediaIds.slice(i, i + 50)], this.userId));
       for (const media of reply.media as Media[]) state.media[media._id] = media;
       await this.storage.write(this.userId, state);
     }
