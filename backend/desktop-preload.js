@@ -52,6 +52,10 @@ contextBridge.exposeInMainWorld('desktopEnvironment', {
   getInfo: () => ipcRenderer.invoke('desktop-environment:get'),
 });
 
+contextBridge.exposeInMainWorld('desktopExternal', {
+  open: (url) => ipcRenderer.invoke('external:open', url),
+});
+
 contextBridge.exposeInMainWorld('desktopWindow', {
   closeApp: () => ipcRenderer.send('app:quit'),
   onFocusSearch: (callback) => {

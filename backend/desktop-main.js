@@ -37,6 +37,14 @@ let mainWindow = null;
 app.setAppUserModelId(APP_USER_MODEL_ID);
 app.setName('Seenary');
 
+ipcMain.handle('external:open', async (_event, value) => {
+  const url = new URL(String(value));
+  const localHttp = url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname);
+  if (url.protocol !== 'https:' && !localHttp) throw new Error('Unsupported external URL.');
+  await shell.openExternal(url.toString());
+  return { ok: true };
+});
+
 const singleInstanceLock = app.requestSingleInstanceLock();
 
 if (!singleInstanceLock) {

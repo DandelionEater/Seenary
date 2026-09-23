@@ -6,6 +6,8 @@ const vm = require('vm');
 const backendDir = path.resolve(__dirname, '..');
 const packageJson = require('../package.json');
 const updaterSource = fs.readFileSync(path.join(backendDir, 'updater.js'), 'utf8');
+const desktopMainSource = fs.readFileSync(path.join(backendDir, 'desktop-main.js'), 'utf8');
+const desktopPreloadSource = fs.readFileSync(path.join(backendDir, 'desktop-preload.js'), 'utf8');
 const windowsBuildSource = fs.readFileSync(
   path.join(backendDir, 'scripts', 'build-release.js'),
   'utf8'
@@ -16,6 +18,13 @@ const linuxBuildSource = fs.readFileSync(
 );
 const provider = packageJson.build?.publish?.[0];
 const windowsArtifactName = packageJson.build?.win?.artifactName;
+
+assert.match(desktopMainSource, /ipcMain\.handle\(['"]external:open['"]/,
+  'Packaged desktop builds must register the external-browser IPC handler.');
+assert.match(desktopMainSource, /shell\.openExternal\(url\.toString\(\)\)/,
+  'Packaged desktop builds must open provider authorization in the system browser.');
+assert.match(desktopPreloadSource, /exposeInMainWorld\(['"]desktopExternal['"]/,
+  'Packaged desktop builds must expose the external-browser bridge to the Atlas renderer.');
 
 assert.deepEqual(provider, {
   provider: 'github',
