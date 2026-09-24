@@ -57,8 +57,10 @@ const HOME_DISCOVER_LAYOUT_STORAGE_KEY = "seenary.discover-layout-order";
 const HOME_DISCOVER_LAYOUT_LEGACY_STORAGE_KEY = "media-tracker.discover-layout-order";
 const TRENDING_CYCLE_MS = 6500;
 const HOME_DISCOVER_CACHE_TTL_MS = 20 * 60 * 1000;
+const DISCOVER_PRESETS_LAYOUT_ID = "browse-presets";
 const DISCOVER_CAROUSEL_LAYOUT_ID = "carousel";
 const DEFAULT_DISCOVER_LAYOUT_ORDER = [
+  DISCOVER_PRESETS_LAYOUT_ID,
   DISCOVER_CAROUSEL_LAYOUT_ID,
   "seasonal",
   "upcoming",
@@ -1987,6 +1989,14 @@ export function HomePage({
     privacySafeDiscoverShelves.map((shelf) => [shelf.id, shelf])
   );
   const discoverLayoutSections: Record<string, ReactNode> = {
+    [DISCOVER_PRESETS_LAYOUT_ID]: (
+      <DiscoverPresetPanel
+        mediaType={mediaType}
+        disabled={isEditingDiscoverLayout}
+        onSelect={handleOpenDiscoverShelf}
+        onOpenCalendar={() => setIsReleaseCalendarOpen(true)}
+      />
+    ),
     [DISCOVER_CAROUSEL_LAYOUT_ID]: showTrendingCarousel ? (
       <TrendingCarousel
         key={`${mediaType}-${hideAdultContent ? "safe" : "all"}`}
@@ -2163,13 +2173,6 @@ export function HomePage({
               onReset={handleResetDiscoverLayout}
             />
 
-            <DiscoverPresetPanel
-              mediaType={mediaType}
-              disabled={isEditingDiscoverLayout}
-              onSelect={handleOpenDiscoverShelf}
-              onOpenCalendar={() => setIsReleaseCalendarOpen(true)}
-            />
-
             {isDiscoverLoading && !privacySafeDiscoverShelves.length ? (
               <DiscoverShelvesSkeleton
                 density={discoverDensity}
@@ -2191,7 +2194,9 @@ export function HomePage({
                     key={sectionId}
                     sectionId={sectionId}
                     label={
-                      sectionId === DISCOVER_CAROUSEL_LAYOUT_ID
+                      sectionId === DISCOVER_PRESETS_LAYOUT_ID
+                        ? "Discovery presets"
+                        : sectionId === DISCOVER_CAROUSEL_LAYOUT_ID
                         ? "Trending carousel"
                         : discoverShelvesById.get(sectionId)?.title ?? "Discover shelf"
                     }
@@ -6282,7 +6287,12 @@ function normalizeDiscoverLayoutOrder(order: string[], shelves: DiscoverShelf[])
     (sectionId) => !savedSections.includes(sectionId)
   );
 
-  return [...savedSections, ...missingSections];
+  const shouldInsertPresetsFirst = missingSections.includes(DISCOVER_PRESETS_LAYOUT_ID);
+  return [
+    ...(shouldInsertPresetsFirst ? [DISCOVER_PRESETS_LAYOUT_ID] : []),
+    ...savedSections,
+    ...missingSections.filter((sectionId) => sectionId !== DISCOVER_PRESETS_LAYOUT_ID),
+  ];
 }
 
 function moveLayoutSection(order: string[], activeSectionId: string, targetSectionId: string) {

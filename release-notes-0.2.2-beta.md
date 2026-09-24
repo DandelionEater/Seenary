@@ -18,6 +18,6 @@ Tag: `v0.2.2-beta`
 - Made anime theme music resilient to AnimeThemes outages: saved results remain available, uncached sections hide cleanly, and provider failures no longer appear as account-operation errors.
 - Added a complete related-titles modal to the direct-connections summary on Anime and Manga details.
 - Related titles and recommendations now show four cards initially and expand or collapse with the same compact control used by streaming episodes.
-- Discover now includes guided genre and browsing presets for Anime and Manga, each backed by a complete paginated AniList collection.
+- Discover now includes guided genre and browsing presets for Anime and Manga, each backed by a complete paginated AniList collection and freely positionable through the Discover layout editor.
 - Added a weekly release calendar with local episode times for Anime, known upcoming publication dates for Manga, My List badges, and collapsible days that automatically close past dates while leaving today open; results are cached for 24 hours to minimize AniList traffic.
 - Restored the hosted analytics report endpoint used by Seenary operations.
