@@ -2177,6 +2177,7 @@ export function HomePage({
               <DiscoverShelvesSkeleton
                 density={discoverDensity}
                 showTrendingCarousel={showTrendingCarousel}
+                layoutOrder={discoverLayoutOrder}
               />
             ) : privacySafeDiscoverShelves.length ? (
               <>
@@ -4145,9 +4146,11 @@ function DiscoverAnimeCard({
 function DiscoverShelvesSkeleton({
   density,
   showTrendingCarousel,
+  layoutOrder,
 }: {
   density: DiscoverDensity;
   showTrendingCarousel: boolean;
+  layoutOrder: string[];
 }) {
   const cardCount = density === "compact" ? 7 : density === "balanced" ? 6 : 5;
   const gridClass =
@@ -4156,49 +4159,90 @@ function DiscoverShelvesSkeleton({
       : density === "balanced"
         ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
         : "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5";
+  const visibleLayoutOrder = normalizeDiscoverLayoutOrder(layoutOrder, []).filter(
+    (sectionId) => sectionId !== DISCOVER_CAROUSEL_LAYOUT_ID || showTrendingCarousel
+  );
 
   return (
     <div className="space-y-6" aria-busy="true" aria-label="Loading discovery shelves">
-      {showTrendingCarousel && <TrendingCarouselSkeleton />}
+      {visibleLayoutOrder.map((sectionId) => {
+        if (sectionId === DISCOVER_PRESETS_LAYOUT_ID) {
+          return <DiscoverPresetPanelSkeleton key={sectionId} />;
+        }
 
-      {Array.from({ length: 3 }).map((_, shelfIndex) => (
-        <section
-          key={shelfIndex}
-          className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/3 p-4 sm:p-5"
-        >
-          <div className="carousel-skeleton-shimmer pointer-events-none absolute inset-0" />
+        if (sectionId === DISCOVER_CAROUSEL_LAYOUT_ID) {
+          return <TrendingCarouselSkeleton key={sectionId} />;
+        }
 
-          <div className="relative mb-5 flex items-center justify-between gap-4">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="h-10 w-10 shrink-0 rounded-2xl border border-white/8 bg-white/8" />
-              <div className="min-w-0 space-y-2">
-                <div className="h-4 w-36 max-w-[45vw] rounded-full bg-white/12" />
-                <div className="h-3 w-56 max-w-[58vw] rounded-full bg-white/7" />
-              </div>
-            </div>
-            <div className="hidden h-8 w-20 shrink-0 rounded-full border border-white/8 bg-white/7 sm:block" />
-          </div>
+        return (
+          <section
+            key={sectionId}
+            className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/3 p-4 sm:p-5"
+          >
+            <div className="carousel-skeleton-shimmer pointer-events-none absolute inset-0" />
 
-          <div className={`relative grid gap-3 sm:gap-4 ${gridClass}`}>
-            {Array.from({ length: cardCount }).map((__, cardIndex) => (
-              <div
-                key={cardIndex}
-                className="min-w-0 overflow-hidden rounded-2xl border border-white/8 bg-black/18"
-              >
-                <div className="aspect-2/3 bg-white/8" />
-                <div className="space-y-2.5 border-t border-white/6 p-3">
-                  <div className="h-3.5 w-4/5 rounded-full bg-white/11" />
-                  <div className="flex gap-2">
-                    <div className="h-3 w-2/5 rounded-full bg-white/7" />
-                    <div className="h-3 w-1/4 rounded-full bg-white/5" />
-                  </div>
+            <div className="relative mb-5 flex items-center justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="h-10 w-10 shrink-0 rounded-2xl border border-white/8 bg-white/8" />
+                <div className="min-w-0 space-y-2">
+                  <div className="h-4 w-36 max-w-[45vw] rounded-full bg-white/12" />
+                  <div className="h-3 w-56 max-w-[58vw] rounded-full bg-white/7" />
                 </div>
               </div>
-            ))}
-          </div>
-        </section>
-      ))}
+              <div className="hidden h-8 w-20 shrink-0 rounded-full border border-white/8 bg-white/7 sm:block" />
+            </div>
+
+            <div className={`relative grid gap-3 sm:gap-4 ${gridClass}`}>
+              {Array.from({ length: cardCount }).map((_, cardIndex) => (
+                <div
+                  key={cardIndex}
+                  className="min-w-0 overflow-hidden rounded-2xl border border-white/8 bg-black/18"
+                >
+                  <div className="aspect-2/3 bg-white/8" />
+                  <div className="space-y-2.5 border-t border-white/6 p-3">
+                    <div className="h-3.5 w-4/5 rounded-full bg-white/11" />
+                    <div className="flex gap-2">
+                      <div className="h-3 w-2/5 rounded-full bg-white/7" />
+                      <div className="h-3 w-1/4 rounded-full bg-white/5" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        );
+      })}
     </div>
+  );
+}
+
+function DiscoverPresetPanelSkeleton() {
+  return (
+    <section className="relative overflow-hidden rounded-3xl border border-white/9 bg-white/[0.025] p-5">
+      <div className="carousel-skeleton-shimmer pointer-events-none absolute inset-0" />
+      <div className="relative flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="h-10 w-10 shrink-0 rounded-2xl border border-white/8 bg-white/8" />
+          <div className="space-y-2">
+            <div className="h-4 w-40 rounded-full bg-white/12" />
+            <div className="h-3 w-72 max-w-[62vw] rounded-full bg-white/7" />
+          </div>
+        </div>
+        <div className="h-9 w-36 rounded-full border border-white/8 bg-white/7" />
+      </div>
+      <div className="relative mt-5 space-y-4">
+        <div className="flex flex-wrap gap-2">
+          {Array.from({ length: 9 }).map((_, index) => (
+            <div key={index} className="h-8 w-20 rounded-full border border-white/8 bg-white/7" />
+          ))}
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="h-16 rounded-2xl border border-white/8 bg-white/5" />
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
