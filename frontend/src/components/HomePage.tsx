@@ -1822,6 +1822,10 @@ export function HomePage({
     () => new Set(trackedEntries.map((entry) => entry.anime_id)),
     [trackedEntries]
   );
+  const trackedMangaIds = useMemo(
+    () => new Set(trackedMangaEntries.map((entry) => entry.manga_id)),
+    [trackedMangaEntries]
+  );
   const trackedEntryByAnimeId = useMemo(
     () => new Map(trackedEntries.map((entry) => [entry.anime_id, entry])),
     [trackedEntries]
@@ -2218,6 +2222,7 @@ export function HomePage({
           mediaType={mediaType}
           hideAdultContent={hideAdultContent}
           titleLanguage={titleLanguage}
+          trackedMediaIds={mediaType === "MANGA" ? trackedMangaIds : trackedAnimeIds}
           onSelectMedia={handleSelectDiscoverMedia}
           onClose={() => setIsReleaseCalendarOpen(false)}
         />
@@ -3457,12 +3462,14 @@ function ReleaseCalendarModal({
   mediaType,
   hideAdultContent,
   titleLanguage,
+  trackedMediaIds,
   onSelectMedia,
   onClose,
 }: {
   mediaType: MediaType;
   hideAdultContent: boolean;
   titleLanguage: TitleLanguage;
+  trackedMediaIds: Set<number>;
   onSelectMedia: (mediaId: number) => void;
   onClose: () => void;
 }) {
@@ -3584,13 +3591,22 @@ function ReleaseCalendarModal({
                   <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                     {items.map((item, index) => {
                       const title = getPreferredTitle(item.media.title, titleLanguage);
+                      const isTracked = trackedMediaIds.has(item.media.id);
                       return (
                         <button key={`${item.media.id}-${item.episode ?? index}`} type="button" onClick={() => { onClose(); onSelectMedia(item.media.id); }} className="flex min-w-0 items-center gap-3 rounded-xl border border-white/8 bg-black/15 p-2.5 text-left transition hover:border-(--app-accent)/30 hover:bg-(--app-accent-soft)">
                           <div className="h-14 w-10 shrink-0 overflow-hidden rounded-lg bg-white/5">
                             {item.media.coverImage?.large && <img src={item.media.coverImage.large} alt="" className="h-full w-full object-cover" />}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-semibold text-white/80">{title}</p>
+                            <div className="flex min-w-0 items-center justify-between gap-2">
+                              <p className="truncate text-sm font-semibold text-white/80">{title}</p>
+                              {isTracked && (
+                                <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-(--app-accent)/30 bg-(--app-accent-soft) px-2 py-1 text-[10px] font-semibold text-(--app-accent)" title="In My List">
+                                  <BookmarkIcon className="h-3 w-3" />
+                                  My List
+                                </span>
+                              )}
+                            </div>
                             <p className="mt-1 text-xs text-white/42">
                               {item.airingAt
                                 ? `${new Date(item.airingAt * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} · Episode ${item.episode ?? "?"}`
