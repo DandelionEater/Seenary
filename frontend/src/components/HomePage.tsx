@@ -3526,9 +3526,8 @@ function ReleaseCalendarModal({
       ariaLabel="Release calendar"
       panelClassName="flex h-[min(52rem,calc(100vh-4rem))] max-w-5xl flex-col overflow-hidden p-0 text-white"
       zClassName="z-60"
-      showCloseButton
     >
-      <div className="shrink-0 border-b border-white/8 px-6 py-5 pr-20">
+      <div className="shrink-0 border-b border-white/8 px-6 py-5">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-(--app-accent)/25 bg-(--app-accent-soft) text-(--app-accent)">
@@ -3548,6 +3547,10 @@ function ReleaseCalendarModal({
             </p>
             <button type="button" onClick={() => setWeekOffset((value) => value + 1)} className="rounded-xl border border-white/10 bg-white/5 p-2 text-white/55 transition hover:bg-white/10 hover:text-white" aria-label="Next week">
               <ArrowRightIcon className="h-4 w-4" />
+            </button>
+            <span className="mx-1 h-6 w-px bg-white/10" aria-hidden="true" />
+            <button type="button" onClick={onClose} className="rounded-xl border border-white/10 bg-white/5 p-2 text-white/55 transition hover:bg-white/10 hover:text-white" aria-label="Close release calendar">
+              <XMarkIcon className="h-4 w-4" />
             </button>
           </div>
         </div>
