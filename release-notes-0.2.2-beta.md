@@ -1,0 +1,15 @@
+# Seenary 0.2.2 Beta
+
+Tag: `v0.2.2-beta`
+
+## New and improved
+
+- Provider sync activity now presents completed pulls as readable summaries instead of internal operation data.
+- The Personal spotlight now follows the latest activity within the current Watching or Reading list, with Planned titles used when no active title is available.
+
+## Reliability and fixes
+
+- Fixed AniList and MyAnimeList authorization on Windows and Linux incorrectly asking users to allow popups after the system browser had already completed authorization.
+- Desktop provider authorization continues in the user's default browser and reliably returns the result to Seenary through callback polling.
+- Library edits now carry their latest local and cloud activity timestamps into the interface, including while an edit is waiting to upload.
+- Restored the hosted analytics report endpoint used by Seenary operations.

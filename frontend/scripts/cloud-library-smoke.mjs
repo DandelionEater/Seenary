@@ -54,6 +54,11 @@ await assert.rejects(client.queue('title', { isFavorite: true }), /Disk full/);
 assert.equal((await client.read()).pending.length, 0);
 failWrite = false;
 await client.queue('title', { isFavorite: true });
+assert.equal(
+  Number.isNaN(Date.parse((await client.read()).pending[0].queuedAt)),
+  false,
+  'a queued edit records immediate local activity for timestamp-driven UI'
+);
 lostResponse = true;
 await assert.rejects(client.flush(), /Connection lost/);
 const operation = (await client.read()).pending[0].request.operationId;
@@ -139,4 +144,4 @@ const broken = new LibraryClient('alice', storage, async method => {
 });
 await assert.rejects(broken.refresh(), /Interrupted pagination/);
 assert.deepEqual(await client.read(), before, 'partial snapshot never replaces durable cache');
-console.log('PASS: durable writes, lost acknowledgement/restart, conflict rebase, stale editor, tombstone restore, account isolation, resumable imports, MAL identity, backup validation and interrupted snapshots.');
+console.log('PASS: durable writes, local activity timestamps, lost acknowledgement/restart, conflict rebase, stale editor, tombstone restore, account isolation, resumable imports, MAL identity, backup validation and interrupted snapshots.');

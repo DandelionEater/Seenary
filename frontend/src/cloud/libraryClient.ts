@@ -4,11 +4,12 @@ export type Fields = {
   notes: string | null; startedAt: string | null; completedAt: string | null;
   repeatCount: number; isRepeating: boolean;
 };
-export type Entry = Fields & { mediaId: string; type: 'ANIME' | 'MANGA'; revision: number; deleted: boolean };
+export type Entry = Fields & { mediaId: string; type: 'ANIME' | 'MANGA'; revision: number; deleted: boolean;
+  createdAt?: string; updatedAt?: string; localUpdatedAt?: string | null; providerUpdatedAt?: string | null };
 export type Media = { _id: string; type: 'ANIME' | 'MANGA'; anilistId?: number; malId?: number; metadata: Record<string, unknown>;
   sources?: { anilist?: { details?: { recommendations?: { nodes?: unknown[] } } } } };
 export type Mutation = { operationId: string; mediaId: string; expectedRevision: number; action: 'upsert' | 'delete'; patch?: Partial<Fields>; restore?: boolean };
-export type Pending = { request: Mutation; error?: string; current?: Entry | null };
+export type Pending = { request: Mutation; queuedAt?: string; error?: string; current?: Entry | null };
 export type Candidate = { key: string; type: 'ANIME' | 'MANGA'; provider: 'anilist' | 'mal'; providerId: number; patch: Partial<Fields>; deleted?: boolean; title: string; done?: boolean };
 export type State = {
   entries: Record<string, Entry>; media: Record<string, Media>; pending: Pending[]; cursor?: string;
@@ -71,7 +72,7 @@ export class LibraryClient {
     const current = state.entries[mediaId];
     const request: Mutation = { operationId: crypto.randomUUID(), mediaId, expectedRevision: expectedRevision ?? current?.revision ?? 0, action,
       ...(action === 'upsert' ? { patch, ...(restore ? { restore: true } : {}) } : {}) };
-    state.pending.push({ request });
+    state.pending.push({ request, queuedAt: new Date().toISOString() });
     await this.storage.write(this.userId, state); // An edit is accepted only after durable storage succeeds.
     return state;
   }

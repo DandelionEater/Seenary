@@ -304,6 +304,31 @@ type RecommendationMedia = {
   averageScore?: number | null;
 };
 
+function latestActivityTime(entry: {
+  local_updated_at?: string | null;
+  provider_updated_at?: string | null;
+  updated_at?: string | null;
+}) {
+  return Math.max(
+    Date.parse(entry.local_updated_at || "") || 0,
+    Date.parse(entry.provider_updated_at || "") || 0,
+    Date.parse(entry.updated_at || "") || 0
+  );
+}
+
+function mostRecentlyActiveWithArtwork<T extends {
+  banner_image?: string | null;
+  cover_image_large?: string | null;
+  local_updated_at?: string | null;
+  provider_updated_at?: string | null;
+  updated_at?: string | null;
+}>(entries: T[]) {
+  return entries
+    .filter((entry) => entry.banner_image || entry.cover_image_large)
+    .reduce<T | null>((latest, entry) =>
+      !latest || latestActivityTime(entry) > latestActivityTime(latest) ? entry : latest, null);
+}
+
 type RecommendationSource = {
   animeId: number;
   title: {
@@ -1758,9 +1783,9 @@ export function HomePage({
   );
   const spotlight = useMemo(() => {
     return (
-      watching.find((entry) => entry.banner_image || entry.cover_image_large) ||
-      planned.find((entry) => entry.banner_image || entry.cover_image_large) ||
-      trackedEntries.find((entry) => entry.banner_image || entry.cover_image_large) ||
+      mostRecentlyActiveWithArtwork(watching) ||
+      mostRecentlyActiveWithArtwork(planned) ||
+      mostRecentlyActiveWithArtwork(trackedEntries) ||
       null
     );
   }, [planned, trackedEntries, watching]);
@@ -2393,9 +2418,9 @@ function MangaHomePreview({
       scoredEntries.length
     : null;
   const spotlight =
-    reading.find((entry) => entry.banner_image || entry.cover_image_large) ||
-    planned.find((entry) => entry.banner_image || entry.cover_image_large) ||
-    entries.find((entry) => entry.banner_image || entry.cover_image_large) ||
+    mostRecentlyActiveWithArtwork(reading) ||
+    mostRecentlyActiveWithArtwork(planned) ||
+    mostRecentlyActiveWithArtwork(entries) ||
     null;
   const widgets: Record<PersonalGridWidgetId, (item: PersonalGridItem) => ReactNode> = {
     spotlight: (item) => (
