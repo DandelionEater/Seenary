@@ -1829,6 +1829,19 @@ export function HomePage({
     () => new Set(trackedMangaEntries.map((entry) => entry.manga_id)),
     [trackedMangaEntries]
   );
+  const completedDiscoverMediaIds = useMemo(
+    () =>
+      new Set(
+        (mediaType === "MANGA" ? trackedMangaEntries : trackedEntries)
+          .filter((entry) => entry.status === "completed")
+          .map((entry) =>
+            mediaType === "MANGA"
+              ? (entry as TrackedMangaEntry).manga_id
+              : (entry as TrackedAnimeEntry).anime_id
+          )
+      ),
+    [mediaType, trackedEntries, trackedMangaEntries]
+  );
   const trackedEntryByAnimeId = useMemo(
     () => new Map(trackedEntries.map((entry) => [entry.anime_id, entry])),
     [trackedEntries]
@@ -2161,6 +2174,7 @@ export function HomePage({
             onLoadMore={handleLoadMoreDiscoverShelf}
             trackedAnimeIds={trackedAnimeIds}
             trackedEntryByAnimeId={trackedEntryByAnimeId}
+            completedMediaIds={completedDiscoverMediaIds}
             titleLanguage={titleLanguage}
             density={discoverDensity}
           />
@@ -3829,6 +3843,7 @@ function DiscoverShelfListPage({
   onLoadMore,
   trackedAnimeIds,
   trackedEntryByAnimeId,
+  completedMediaIds,
   titleLanguage,
   density,
 }: {
@@ -3842,14 +3857,24 @@ function DiscoverShelfListPage({
   onLoadMore: (shelf: DiscoverShelf) => void;
   trackedAnimeIds: Set<number>;
   trackedEntryByAnimeId: Map<number, TrackedAnimeEntry>;
+  completedMediaIds: Set<number>;
   titleLanguage: TitleLanguage;
   density: DiscoverDensity;
 }) {
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const [excludeCompleted, setExcludeCompleted] = useState(true);
   const shelf = state?.shelf ?? fallbackShelf;
   const items = state?.items ?? fallbackShelf?.items ?? [];
+  const visibleItems = excludeCompleted
+    ? items.filter((item) => !completedMediaIds.has(item.id))
+    : items;
+  const excludedCount = items.length - visibleItems.length;
   const pageInfo = state?.pageInfo;
   const hasNextPage = Boolean(pageInfo?.hasNextPage);
+  useEffect(() => {
+    setExcludeCompleted(true);
+  }, [shelf?.id]);
+
   useEffect(() => {
     if (
       !shelf ||
@@ -3918,10 +3943,21 @@ function DiscoverShelfListPage({
         <p className="text-sm text-white/45">
           {state?.isLoading
             ? "Loading titles..."
-            : `${formatNumber(items.length)} loaded${
+            : `${formatNumber(visibleItems.length)} shown${
+                excludedCount ? ` · ${formatNumber(excludedCount)} completed hidden` : ""
+              }${
                 pageInfo?.total ? ` of ${formatNumber(pageInfo.total)}` : ""
               }`}
         </p>
+        <label className="inline-flex cursor-pointer select-none items-center gap-2 rounded-full border border-white/10 bg-white/4 px-3 py-2 text-xs font-semibold text-white/70 transition hover:bg-white/8 hover:text-white">
+          <input
+            type="checkbox"
+            checked={excludeCompleted}
+            onChange={(event) => setExcludeCompleted(event.target.checked)}
+            className="h-4 w-4 accent-(--app-accent)"
+          />
+          Exclude completed
+        </label>
       </div>
 
       {state?.warning && (
@@ -3938,9 +3974,23 @@ function DiscoverShelfListPage({
 
       {state?.isLoading && !items.length ? (
         <DiscoverGridSkeleton density={density} />
+      ) : excludeCompleted && items.length > 0 && visibleItems.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-white/10 bg-white/3 px-5 py-10 text-center">
+          <CheckCircleIcon className="mx-auto h-7 w-7 text-(--app-accent)" />
+          <p className="mt-3 text-sm font-semibold text-white/80">
+            You have completed every loaded title here.
+          </p>
+          <button
+            type="button"
+            onClick={() => setExcludeCompleted(false)}
+            className="mt-4 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-(--app-accent)/55"
+          >
+            Show completed
+          </button>
+        </div>
       ) : (
         <div className={DISCOVER_LIST_GRID_CLASS}>
-          {items.map((anime) => (
+          {visibleItems.map((anime) => (
             <DiscoverAnimeCard
               key={`${shelf.id}-full-${anime.id}`}
               anime={anime}

@@ -22,4 +22,5 @@ Tag: `v0.2.2-beta`
 - Added a weekly release calendar with local episode times for Anime, known upcoming publication dates for Manga, My List badges, and collapsible days that automatically close past dates while leaving today open; results are cached for 24 hours to minimize AniList traffic.
 - Compact media cards now use concise, readable format labels, and Planned Picks no longer repeats a title's source in its metadata line.
 - Discover loading placeholders now include the browsing presets and follow each user's saved section order.
+- Full discovery collections exclude completed library entries by default, with a filter to show them again at any time.
 - Restored the hosted analytics report endpoint used by Seenary operations.
