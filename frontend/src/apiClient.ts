@@ -652,6 +652,8 @@ export function installApiClient() {
       rpc("getDiscoverShelfAnime", [shelfId, page, hideAdultContent, mediaType], {
         timeoutMs: 20_000,
       }),
+    getReleaseCalendar: (start, end, hideAdultContent = true, mediaType = "ANIME") =>
+      rpc("getReleaseCalendar", [start, end, hideAdultContent, mediaType], { timeoutMs: 20_000 }),
     getStudioMedia: (studioId, page = 1, hideAdultContent = true) =>
       rpc("getStudioMedia", [studioId, page, hideAdultContent], { timeoutMs: 20_000 }),
     getArtistMedia: (artistSlug, page = 1, hideAdultContent = true) =>

@@ -323,6 +323,22 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
           return { id: shelfId, items: [], pageInfo: { currentPage: inputPage, lastPage: inputPage, hasNextPage: false }, warning: 'This discovery page is not cached and AniList is unavailable.' };
         }
       }
+      if (method === 'getReleaseCalendar') {
+        const [inputStart, inputEnd, hideAdult = true, type = 'ANIME'] = args;
+        const start = Number(inputStart);
+        const end = Number(inputEnd);
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end <= start || end - start > 14 * 86400 || !['ANIME', 'MANGA'].includes(type)) throw new Error('Invalid release calendar window.');
+        const hideAdultContent = hideAdult !== false;
+        try {
+          const result = await fetchCached(JSON.stringify([method, start, end, hideAdultContent, type]), () => provider.calendar(start, end, hideAdultContent, type), HOUR, (payload, time) => {
+            if (!Array.isArray(payload?.items) || payload.items.length > 500) throw new Error('Invalid release calendar response.');
+            return ingestTree(payload.items.map(item => item.media), type, time);
+          });
+          return { ...result.payload, ...(result.stale ? { warning: 'Showing a saved release calendar while AniList is unavailable.' } : {}) };
+        } catch {
+          return { mediaType: type, start, end, precision: type === 'ANIME' ? 'time' : 'date', items: [], warning: 'The release calendar is temporarily unavailable.' };
+        }
+      }
       if (method === 'getStudioMedia') {
         const [id, page = 1, hideAdult = true] = args;
         if (!validId(id) || !Number.isInteger(page) || page < 1 || page > 100) throw new Error('Invalid studio page.');

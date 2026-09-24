@@ -23,6 +23,8 @@ const legacyApi = {
     ipcRenderer.invoke('anilist:discover-media', { hideAdultContent }),
   getDiscoverShelfAnime: (shelfId, page = 1, hideAdultContent = true, mediaType = 'ANIME') =>
     ipcRenderer.invoke('anilist:discover-shelf', { shelfId, page, hideAdultContent, mediaType }),
+  getReleaseCalendar: (start, end, hideAdultContent = true, mediaType = 'ANIME') =>
+    ipcRenderer.invoke('anilist:release-calendar', { start, end, hideAdultContent, mediaType }),
   getStudioMedia: (studioId, page = 1, hideAdultContent = true) =>
     ipcRenderer.invoke('anilist:studio-media', { studioId, page, hideAdultContent }),
   getArtistMedia: (artistSlug, page = 1, hideAdultContent = true) =>

@@ -954,6 +954,15 @@ ipcMain.handle('anilist:discover-shelf', async (_event, payload) => {
   });
 });
 
+ipcMain.handle('anilist:release-calendar', async (_event, payload) => {
+  return await anilist.getReleaseCalendar({
+    start: payload?.start,
+    end: payload?.end,
+    hideAdultContent: payload?.hideAdultContent,
+    mediaType: payload?.mediaType,
+  });
+});
+
 ipcMain.handle('anilist:studio-media', async (_event, payload) => {
   return await anilist.getStudioMedia(payload?.studioId, payload?.page, {
     hideAdultContent: payload?.hideAdultContent,

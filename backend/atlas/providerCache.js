@@ -12,6 +12,7 @@ function createProviderCache({ queries, now = () => Date.now(), requestSpacingMs
       const name = JSON.parse(key)?.[0];
       return ({ searchMedia: 'search', getDiscoverMedia: 'discovery', getDiscoverShelfAnime: 'shelf',
         getStudioMedia: 'studio', 'animethemes:artist': 'artist', 'animethemes:title': 'theme-music',
+        getReleaseCalendar: 'calendar',
         'anilist:artist-cards': 'artist-cards' })[name] || 'other';
     } catch { return 'other'; }
   }

@@ -280,6 +280,20 @@ export type DiscoverMediaResult = {
   };
 };
 
+export type ReleaseCalendarResult = {
+  mediaType: MediaType;
+  start: number;
+  end: number;
+  precision: "time" | "date";
+  items: Array<{
+    airingAt?: number;
+    episode?: number;
+    date?: { year?: number | null; month?: number | null; day?: number | null };
+    media: AnimeMedia;
+  }>;
+  warning?: string | null;
+};
+
 export type RelatedAnimeEdge = {
   relationType?: string | null;
   node?: AnimeMedia | null;

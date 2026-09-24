@@ -3,6 +3,7 @@ import type {
   AnimeThemeMusicItem,
   DiscoverMediaResult,
   DiscoverShelfResult,
+  ReleaseCalendarResult,
   StudioCatalogResult,
   ArtistCatalogResult,
   ImportPayload,
@@ -155,6 +156,12 @@ declare global {
         hideAdultContent?: boolean,
         mediaType?: "ANIME" | "MANGA"
       ) => Promise<DiscoverShelfResult>;
+      getReleaseCalendar: (
+        start: number,
+        end: number,
+        hideAdultContent?: boolean,
+        mediaType?: "ANIME" | "MANGA"
+      ) => Promise<ReleaseCalendarResult>;
       getStudioMedia: (
         studioId: number,
         page?: number,

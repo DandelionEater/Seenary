@@ -496,6 +496,7 @@ export function installAtlasRenderer(legacy: Api) {
     searchMedia: (text: string, hideAdultContent = true) => rpc('searchMedia', [text, hideAdultContent], user?.id),
     getDiscoverMedia: (hideAdultContent = true) => rpc('getDiscoverMedia', [hideAdultContent], user?.id),
     getDiscoverShelfAnime: (shelfId: string, page = 1, hideAdultContent = true, mediaType = 'ANIME') => rpc('getDiscoverShelfAnime', [shelfId, page, hideAdultContent, mediaType], user?.id),
+    getReleaseCalendar: (start: number, end: number, hideAdultContent = true, mediaType = 'ANIME') => rpc('getReleaseCalendar', [start, end, hideAdultContent, mediaType], user?.id),
     getStudioMedia: (id: number, page = 1, hideAdultContent = true) => rpc('getStudioMedia', [id, page, hideAdultContent], user?.id),
     getArtistMedia: (slug: string, page = 1, hideAdultContent = true) => rpc('getArtistMedia', [slug, page, hideAdultContent], user?.id),
     getAnimeThemeMusic: async (id: number, titles: string[] = []) => await rpc('getAnimeThemeMusic', [id, titles], user?.id) as unknown as AnimeThemeMusicItem[],
@@ -595,7 +596,7 @@ export function installAtlasRenderer(legacy: Api) {
     setTutorialDismissed: async () => ({ ok: true, user: user && { ...user, id: preferenceId, tutorial_dismissed: 1 } }),
   };
   Object.assign(handlers, methods);
-  const publicReads = new Set(['searchMedia', 'getDiscoverMedia', 'getDiscoverShelfAnime', 'getStudioMedia', 'getArtistMedia']);
+  const publicReads = new Set(['searchMedia', 'getDiscoverMedia', 'getDiscoverShelfAnime', 'getReleaseCalendar', 'getStudioMedia', 'getArtistMedia']);
   // Electron contextBridge objects are frozen and expose non-configurable
   // properties. A fresh target lets Atlas override those method names while
   // still delegating explicitly supported native reads to the legacy bridge.

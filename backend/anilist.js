@@ -688,6 +688,64 @@ async function getDiscoverShelfAnime(options = {}) {
   };
 }
 
+async function getReleaseCalendar(options = {}) {
+  const hideAdultContent = options.hideAdultContent !== false;
+  const mediaType = options.mediaType === 'MANGA' ? 'MANGA' : 'ANIME';
+  const start = clampInteger(options.start, 1, 4102444800, Math.floor(Date.now() / 1000));
+  const end = Math.min(start + 14 * 86400, clampInteger(options.end, start + 1, 4102444800, start + 7 * 86400));
+
+  if (mediaType === 'ANIME') {
+    const query = `
+      query ($page: Int, $from: Int, $to: Int) {
+        Page(page: $page, perPage: 50) {
+          pageInfo { hasNextPage }
+          airingSchedules(airingAt_greater: $from, airingAt_lesser: $to, sort: TIME) {
+            airingAt
+            episode
+            media {
+              id isAdult format status episodes
+              title { romaji english native userPreferred }
+              coverImage { large }
+            }
+          }
+        }
+      }
+    `;
+    const items = [];
+    for (let page = 1; page <= 5; page += 1) {
+      const data = await anilistRequestWithRetry(query, { page, from: start, to: end });
+      const schedules = data.data?.Page?.airingSchedules ?? [];
+      items.push(...schedules.filter(item => !hideAdultContent || item.media?.isAdult !== true));
+      if (!data.data?.Page?.pageInfo?.hasNextPage) break;
+    }
+    return { mediaType, start, end, precision: 'time', items };
+  }
+
+  const fromDate = new Date(start * 1000);
+  const fuzzyStart = fromDate.getUTCFullYear() * 10000 + (fromDate.getUTCMonth() + 1) * 100 + fromDate.getUTCDate() - 1;
+  const query = `
+    query ($start: FuzzyDateInt, $isAdult: Boolean) {
+      Page(page: 1, perPage: 50) {
+        media(type: MANGA, status: NOT_YET_RELEASED, startDate_greater: $start, sort: START_DATE, isAdult: $isAdult) {
+          id isAdult format status chapters volumes
+          title { romaji english native userPreferred }
+          coverImage { large }
+          startDate { year month day }
+        }
+      }
+    }
+  `;
+  const data = await anilistRequestWithRetry(query, { start: fuzzyStart, isAdult: hideAdultContent ? false : undefined });
+  const items = (data.data?.Page?.media ?? []).filter(media => {
+    if (hideAdultContent && media.isAdult === true) return false;
+    const value = media.startDate;
+    if (!value?.year || !value?.month || !value?.day) return false;
+    const timestamp = Date.UTC(value.year, value.month - 1, value.day) / 1000;
+    return timestamp >= start && timestamp < end;
+  }).map(media => ({ date: media.startDate, media }));
+  return { mediaType, start, end, precision: 'date', items };
+}
+
 async function fetchDiscoverShelfPage(definition, { page, perPage, hideAdultContent, mediaType }) {
   const query = `
     query (
@@ -1810,6 +1868,7 @@ module.exports = {
   searchMangaBatch,
   getDiscoverMedia,
   getDiscoverShelfAnime,
+  getReleaseCalendar,
   getUserAnimeCollection,
   getUserMangaCollection,
   getViewer,

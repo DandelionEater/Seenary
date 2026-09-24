@@ -9,6 +9,7 @@ function createAniListMetadataProvider() {
     search: (text, hideAdultContent) => anilist.searchMedia(text, { hideAdultContent }),
     discover: hideAdultContent => anilist.getDiscoverMedia({ hideAdultContent }),
     shelf: (shelfId, page, hideAdultContent, mediaType) => anilist.getDiscoverShelfAnime({ shelfId, page, hideAdultContent, mediaType }),
+    calendar: (start, end, hideAdultContent, mediaType) => anilist.getReleaseCalendar({ start, end, hideAdultContent, mediaType }),
     studio: (id, page, hideAdultContent) => anilist.getStudioMedia(id, page, { hideAdultContent }),
     person: (kind, id) => kind === 'character' ? anilist.getCharacterDetails(id) : anilist.getStaffDetails(id),
     themes: (id, titles) => animethemes.getAnimeThemeMusic(id, titles),

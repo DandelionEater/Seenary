@@ -31,6 +31,7 @@ import { LibraryLens, type LibraryDestination } from "./LibraryLens";
 import { LayoutEditorToolbar, ReorderableSection } from "./ui/LayoutEditor";
 import { MediaShelf } from "./ui/MediaShelf";
 import { AsyncStatePanel } from "./ui/AsyncStatePanel";
+import { ModalShell } from "./ui/ModalShell";
 import { Tooltip } from "./ui/Tooltip";
 import {
   formatEnum,
@@ -38,7 +39,7 @@ import {
   formatNumber as formatExactNumber,
   formatScore10,
 } from "../utils/mediaFormatting";
-import type { MediaType, TrackedMangaEntry } from "../types/domain";
+import type { MediaType, ReleaseCalendarResult, TrackedMangaEntry } from "../types/domain";
 import {
   dismissRecentMedia,
   readRecentMediaHistory,
@@ -612,6 +613,7 @@ export function HomePage({
   const [isDiscoverLoading, setIsDiscoverLoading] = useState(false);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
   const [discoverRetryKey, setDiscoverRetryKey] = useState(0);
+  const [isReleaseCalendarOpen, setIsReleaseCalendarOpen] = useState(false);
   const [favoriteRecommendationsByAnimeId, setFavoriteRecommendationsByAnimeId] = useState<
     Record<number, RecommendationEntry[]>
   >({});
@@ -2160,6 +2162,7 @@ export function HomePage({
               mediaType={mediaType}
               disabled={isEditingDiscoverLayout}
               onSelect={handleOpenDiscoverShelf}
+              onOpenCalendar={() => setIsReleaseCalendarOpen(true)}
             />
 
             {isDiscoverLoading && !privacySafeDiscoverShelves.length ? (
@@ -2210,6 +2213,15 @@ export function HomePage({
           </>
         )}
       </div>
+      {isReleaseCalendarOpen && (
+        <ReleaseCalendarModal
+          mediaType={mediaType}
+          hideAdultContent={hideAdultContent}
+          titleLanguage={titleLanguage}
+          onSelectMedia={handleSelectDiscoverMedia}
+          onClose={() => setIsReleaseCalendarOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -3327,10 +3339,12 @@ function DiscoverPresetPanel({
   mediaType,
   disabled,
   onSelect,
+  onOpenCalendar,
 }: {
   mediaType: MediaType;
   disabled: boolean;
   onSelect: (shelf: DiscoverShelf) => void;
+  onOpenCalendar: () => void;
 }) {
   const kind = mediaType === "MANGA" ? "manga" : "anime";
   const browsePresets = [
@@ -3367,7 +3381,8 @@ function DiscoverPresetPanel({
 
   return (
     <section className="rounded-3xl border border-white/9 bg-white/[0.025] p-5" aria-label="Browse discovery presets">
-      <div className="flex items-start gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-(--app-accent)/25 bg-(--app-accent-soft) text-(--app-accent)">
           <SparklesIcon className="h-5 w-5" />
         </span>
@@ -3377,6 +3392,16 @@ function DiscoverPresetPanel({
             Pick a genre or a way to browse. Each preset opens a complete, paginated collection.
           </p>
         </div>
+        </div>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onOpenCalendar}
+          className="inline-flex shrink-0 items-center gap-2 rounded-full border border-(--app-accent)/25 bg-(--app-accent-soft) px-4 py-2 text-xs font-semibold text-white/75 transition hover:border-(--app-accent)/45 hover:text-white focus:outline-none focus:ring-2 focus:ring-(--app-accent)/55 disabled:cursor-default disabled:opacity-35"
+        >
+          <CalendarDaysIcon className="h-4 w-4" />
+          Release calendar
+        </button>
       </div>
 
       <div className="mt-5">
@@ -3425,6 +3450,163 @@ function DiscoverPresetPanel({
         })}
       </div>
     </section>
+  );
+}
+
+function ReleaseCalendarModal({
+  mediaType,
+  hideAdultContent,
+  titleLanguage,
+  onSelectMedia,
+  onClose,
+}: {
+  mediaType: MediaType;
+  hideAdultContent: boolean;
+  titleLanguage: TitleLanguage;
+  onSelectMedia: (mediaId: number) => void;
+  onClose: () => void;
+}) {
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [result, setResult] = useState<ReleaseCalendarResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const weekStart = useMemo(() => {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+    const mondayOffset = (date.getDay() + 6) % 7;
+    date.setDate(date.getDate() - mondayOffset + weekOffset * 7);
+    return date;
+  }, [weekOffset]);
+  const weekEnd = useMemo(
+    () => new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 7),
+    [weekStart]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void window.api
+      .getReleaseCalendar(
+        Math.floor(weekStart.getTime() / 1000),
+        Math.floor(weekEnd.getTime() / 1000),
+        hideAdultContent,
+        mediaType
+      )
+      .then((next) => {
+        if (!cancelled) setResult(next);
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "The release calendar could not load.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hideAdultContent, mediaType, weekEnd, weekStart]);
+
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + index);
+    const items = (result?.items ?? []).filter((item) => {
+      const itemDate = item.airingAt
+        ? new Date(item.airingAt * 1000)
+        : item.date?.year && item.date?.month && item.date?.day
+          ? new Date(item.date.year, item.date.month - 1, item.date.day)
+          : null;
+      return itemDate?.toDateString() === date.toDateString();
+    });
+    return { date, items };
+  });
+
+  return (
+    <ModalShell
+      onClose={onClose}
+      ariaLabel="Release calendar"
+      panelClassName="flex h-[min(52rem,calc(100vh-4rem))] max-w-5xl flex-col overflow-hidden p-0 text-white"
+      zClassName="z-60"
+      showCloseButton
+    >
+      <div className="shrink-0 border-b border-white/8 px-6 py-5 pr-20">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-(--app-accent)/25 bg-(--app-accent-soft) text-(--app-accent)">
+              <CalendarDaysIcon className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">Discover</p>
+              <h2 className="mt-1 text-xl font-semibold">Release calendar</h2>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => setWeekOffset((value) => value - 1)} className="rounded-xl border border-white/10 bg-white/5 p-2 text-white/55 transition hover:bg-white/10 hover:text-white" aria-label="Previous week">
+              <ArrowLeftIcon className="h-4 w-4" />
+            </button>
+            <p className="min-w-44 text-center text-xs font-medium text-white/60">
+              {weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – {new Date(weekEnd.getTime() - 1).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+            </p>
+            <button type="button" onClick={() => setWeekOffset((value) => value + 1)} className="rounded-xl border border-white/10 bg-white/5 p-2 text-white/55 transition hover:bg-white/10 hover:text-white" aria-label="Next week">
+              <ArrowRightIcon className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-white/40">
+          {mediaType === "ANIME"
+            ? "Episode times are converted to your local timezone."
+            : "AniList provides publication dates for Manga, but not scheduled chapter times."}
+        </p>
+      </div>
+
+      <div className="scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 [scrollbar-gutter:stable]">
+        {loading ? (
+          <div className="flex h-full min-h-64 items-center justify-center gap-3 text-sm text-white/45">
+            <ArrowPathIcon className="h-5 w-5 animate-spin" /> Loading this week…
+          </div>
+        ) : error ? (
+          <AsyncStatePanel icon={ExclamationTriangleIcon} title="Calendar unavailable" message={error} />
+        ) : (
+          <div className="space-y-4">
+            {result?.warning && <p className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-xs text-amber-100">{result.warning}</p>}
+            {days.map(({ date, items }) => (
+              <section key={date.toISOString()} className="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white/80">{date.toLocaleDateString(undefined, { weekday: "long" })}</h3>
+                    <p className="mt-0.5 text-xs text-white/35">{date.toLocaleDateString(undefined, { month: "long", day: "numeric" })}</p>
+                  </div>
+                  <span className="rounded-full bg-white/6 px-2.5 py-1 text-[10px] text-white/35">{items.length}</span>
+                </div>
+                {items.length ? (
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                    {items.map((item, index) => {
+                      const title = getPreferredTitle(item.media.title, titleLanguage);
+                      return (
+                        <button key={`${item.media.id}-${item.episode ?? index}`} type="button" onClick={() => { onClose(); onSelectMedia(item.media.id); }} className="flex min-w-0 items-center gap-3 rounded-xl border border-white/8 bg-black/15 p-2.5 text-left transition hover:border-(--app-accent)/30 hover:bg-(--app-accent-soft)">
+                          <div className="h-14 w-10 shrink-0 overflow-hidden rounded-lg bg-white/5">
+                            {item.media.coverImage?.large && <img src={item.media.coverImage.large} alt="" className="h-full w-full object-cover" />}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-semibold text-white/80">{title}</p>
+                            <p className="mt-1 text-xs text-white/42">
+                              {item.airingAt
+                                ? `${new Date(item.airingAt * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} · Episode ${item.episode ?? "?"}`
+                                : "Publication date · Chapter schedule unavailable"}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="rounded-xl border border-dashed border-white/8 px-3 py-4 text-xs text-white/28">No known releases.</p>
+                )}
+              </section>
+            ))}
+          </div>
+        )}
+      </div>
+    </ModalShell>
   );
 }
 

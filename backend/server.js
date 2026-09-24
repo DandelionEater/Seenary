@@ -2029,6 +2029,13 @@ async function handleRpc(method, args, req, res) {
         hideAdultContent: args[2],
         mediaType: args[3],
       });
+    case 'getReleaseCalendar':
+      return await anilist.getReleaseCalendar({
+        start: args[0],
+        end: args[1],
+        hideAdultContent: args[2],
+        mediaType: args[3],
+      });
     case 'getStudioMedia':
       return await anilist.getStudioMedia(args[0], args[1], {
         hideAdultContent: args[2],
