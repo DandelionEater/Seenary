@@ -397,6 +397,18 @@ type DiscoverShelf = {
   items: TrendingAnime[];
 };
 
+const DISCOVER_GENRE_PRESETS = [
+  ["genre-action", "Action"],
+  ["genre-adventure", "Adventure"],
+  ["genre-comedy", "Comedy"],
+  ["genre-drama", "Drama"],
+  ["genre-fantasy", "Fantasy"],
+  ["genre-mystery", "Mystery"],
+  ["genre-romance", "Romance"],
+  ["genre-sci-fi", "Sci-Fi"],
+  ["genre-slice-of-life", "Slice of Life"],
+] as const;
+
 type DiscoverMediaCatalog = {
   anime: { trending: TrendingAnime[]; shelves: DiscoverShelf[] };
   manga: { trending: TrendingAnime[]; shelves: DiscoverShelf[] };
@@ -2144,6 +2156,12 @@ export function HomePage({
               onReset={handleResetDiscoverLayout}
             />
 
+            <DiscoverPresetPanel
+              mediaType={mediaType}
+              disabled={isEditingDiscoverLayout}
+              onSelect={handleOpenDiscoverShelf}
+            />
+
             {isDiscoverLoading && !privacySafeDiscoverShelves.length ? (
               <DiscoverShelvesSkeleton
                 density={discoverDensity}
@@ -3302,6 +3320,111 @@ function OverviewMetric({
     >
       {metric}
     </Tooltip>
+  );
+}
+
+function DiscoverPresetPanel({
+  mediaType,
+  disabled,
+  onSelect,
+}: {
+  mediaType: MediaType;
+  disabled: boolean;
+  onSelect: (shelf: DiscoverShelf) => void;
+}) {
+  const kind = mediaType === "MANGA" ? "manga" : "anime";
+  const browsePresets = [
+    {
+      id: "browse-complete",
+      title: "Completed stories",
+      description: "Start something you can finish",
+      pills: ["Finished", "Highly rated"],
+      icon: CheckCircleIcon,
+    },
+    {
+      id: "browse-new",
+      title: "Fresh releases",
+      description: `Recently started ${kind}`,
+      pills: ["New", "Recent"],
+      icon: CalendarDaysIcon,
+    },
+    mediaType === "MANGA"
+      ? {
+          id: "browse-one-shots",
+          title: "One-shots",
+          description: "Complete stories in one publication",
+          pills: ["One-shot", "Quick read"],
+          icon: BookOpenIcon,
+        }
+      : {
+          id: "browse-movies",
+          title: "Anime movies",
+          description: "Feature-length, one-sitting watches",
+          pills: ["Movie", "One sitting"],
+          icon: PlayCircleIcon,
+        },
+  ];
+
+  return (
+    <section className="rounded-3xl border border-white/9 bg-white/[0.025] p-5" aria-label="Browse discovery presets">
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-(--app-accent)/25 bg-(--app-accent-soft) text-(--app-accent)">
+          <SparklesIcon className="h-5 w-5" />
+        </span>
+        <div>
+          <h2 className="text-base font-semibold text-white/90">Find your next {kind}</h2>
+          <p className="mt-1 text-xs leading-5 text-white/42">
+            Pick a genre or a way to browse. Each preset opens a complete, paginated collection.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-5">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/30">Genres</p>
+        <div className="mt-2.5 flex flex-wrap gap-2">
+          {DISCOVER_GENRE_PRESETS.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              disabled={disabled}
+              onClick={() => onSelect({
+                id,
+                title: `${label} ${mediaType === "MANGA" ? "Manga" : "Anime"}`,
+                description: `Popular ${label.toLowerCase()} ${kind} from across AniList.`,
+                pills: [label, "Popularity"],
+                items: [],
+              })}
+              className="rounded-full border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs font-medium text-white/62 transition hover:-translate-y-0.5 hover:border-(--app-accent)/35 hover:bg-(--app-accent-soft) hover:text-white focus:outline-none focus:ring-2 focus:ring-(--app-accent)/55 disabled:cursor-default disabled:opacity-35 disabled:hover:translate-y-0"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+        {browsePresets.map((preset) => {
+          const Icon = preset.icon;
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              disabled={disabled}
+              onClick={() => onSelect({ ...preset, items: [] })}
+              className="group flex min-w-0 items-center gap-3 rounded-2xl border border-white/9 bg-black/15 p-3 text-left transition hover:-translate-y-0.5 hover:border-(--app-accent)/30 hover:bg-(--app-accent-soft) focus:outline-none focus:ring-2 focus:ring-(--app-accent)/55 disabled:cursor-default disabled:opacity-35 disabled:hover:translate-y-0"
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/45 transition group-hover:border-(--app-accent)/25 group-hover:text-(--app-accent)">
+                <Icon className="h-4 w-4" />
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold text-white/78">{preset.title}</span>
+                <span className="mt-1 block truncate text-[11px] text-white/35">{preset.description}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

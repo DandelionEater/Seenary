@@ -698,7 +698,9 @@ async function fetchDiscoverShelfPage(definition, { page, perPage, hideAdultCont
       $seasonYear: Int,
       $sort: [MediaSort],
       $mediaType: MediaType,
-      $status: MediaStatus
+      $status: MediaStatus,
+      $genre: String,
+      $format: MediaFormat
     ) {
       Page(page: $page, perPage: $perPage) {
         pageInfo {
@@ -714,6 +716,8 @@ async function fetchDiscoverShelfPage(definition, { page, perPage, hideAdultCont
           season: $season,
           seasonYear: $seasonYear,
           sort: $sort,
+          genre: $genre,
+          format: $format,
           isAdult: $isAdult
         ) {
           id
@@ -752,6 +756,8 @@ async function fetchDiscoverShelfPage(definition, { page, perPage, hideAdultCont
       sort: definition.sort,
       mediaType,
       status: definition.status,
+      genre: definition.genre,
+      format: definition.format,
     },
     null,
     1
@@ -760,6 +766,69 @@ async function fetchDiscoverShelfPage(definition, { page, perPage, hideAdultCont
 
 function getDiscoverShelfDefinition(shelfId, mediaType = 'ANIME') {
   const { currentSeason, currentYear, nextSeason, nextYear } = getSeasonWindows();
+  const genreDefinitions = {
+    'genre-action': 'Action',
+    'genre-adventure': 'Adventure',
+    'genre-comedy': 'Comedy',
+    'genre-drama': 'Drama',
+    'genre-fantasy': 'Fantasy',
+    'genre-mystery': 'Mystery',
+    'genre-romance': 'Romance',
+    'genre-sci-fi': 'Sci-Fi',
+    'genre-slice-of-life': 'Slice of Life',
+  };
+  const genre = genreDefinitions[shelfId];
+  if (genre) {
+    return {
+      id: shelfId,
+      title: `${genre} ${mediaType === 'MANGA' ? 'Manga' : 'Anime'}`,
+      description: `Popular ${genre.toLowerCase()} ${mediaType === 'MANGA' ? 'manga' : 'anime'} from across AniList.`,
+      pills: [genre, 'Popularity'],
+      genre,
+      sort: ['POPULARITY_DESC'],
+    };
+  }
+
+  const browseDefinitions = {
+    'browse-complete': {
+      id: 'browse-complete',
+      title: 'Completed Stories',
+      description: `${mediaType === 'MANGA' ? 'Manga' : 'Anime'} you can experience from beginning to end.`,
+      pills: ['Finished', 'Highly rated'],
+      status: 'FINISHED',
+      sort: ['SCORE_DESC', 'POPULARITY_DESC'],
+    },
+    'browse-new': {
+      id: 'browse-new',
+      title: 'Fresh Releases',
+      description: `Recently started and newly listed ${mediaType === 'MANGA' ? 'manga' : 'anime'}.`,
+      pills: ['New', 'Recent'],
+      sort: ['START_DATE_DESC', 'POPULARITY_DESC'],
+    },
+    ...(mediaType === 'MANGA'
+      ? {
+          'browse-one-shots': {
+            id: 'browse-one-shots',
+            title: 'One-Shots',
+            description: 'Complete stories told in a single publication.',
+            pills: ['One-shot', 'Quick read'],
+            format: 'ONE_SHOT',
+            sort: ['POPULARITY_DESC'],
+          },
+        }
+      : {
+          'browse-movies': {
+            id: 'browse-movies',
+            title: 'Anime Movies',
+            description: 'Feature-length anime for a one-sitting watch.',
+            pills: ['Movie', 'One sitting'],
+            format: 'MOVIE',
+            sort: ['POPULARITY_DESC'],
+          },
+        }),
+  };
+  if (browseDefinitions[shelfId]) return browseDefinitions[shelfId];
+
   if (mediaType === 'MANGA') {
     const mangaDefinitions = {
       seasonal: {
