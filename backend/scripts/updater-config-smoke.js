@@ -8,6 +8,10 @@ const packageJson = require('../package.json');
 const updaterSource = fs.readFileSync(path.join(backendDir, 'updater.js'), 'utf8');
 const desktopMainSource = fs.readFileSync(path.join(backendDir, 'desktop-main.js'), 'utf8');
 const desktopPreloadSource = fs.readFileSync(path.join(backendDir, 'desktop-preload.js'), 'utf8');
+const rendererAdapterSource = fs.readFileSync(
+  path.resolve(backendDir, '..', 'frontend', 'src', 'cloud', 'rendererAdapter.ts'),
+  'utf8'
+);
 const windowsBuildSource = fs.readFileSync(
   path.join(backendDir, 'scripts', 'build-release.js'),
   'utf8'
@@ -25,6 +29,12 @@ assert.match(desktopMainSource, /shell\.openExternal\(url\.toString\(\)\)/,
   'Packaged desktop builds must open provider authorization in the system browser.');
 assert.match(desktopPreloadSource, /exposeInMainWorld\(['"]desktopExternal['"]/,
   'Packaged desktop builds must expose the external-browser bridge to the Atlas renderer.');
+assert.match(rendererAdapterSource, /desktopExternal \|\| window\.desktopUpdater \|\| window\.desktopEnvironment/,
+  'Provider login must recognize desktop builds even when the external-browser bridge is unavailable.');
+assert.match(rendererAdapterSource, /beginProviderLink' : 'beginProviderLogin'[^\r\n]+'poll'/,
+  'Desktop provider login must use callback polling instead of popup messaging.');
+assert.match(rendererAdapterSource, /window\.open\(started\.authorizationUrl, ['"]_blank['"]\)/,
+  'Older desktop builds must hand authorization to the system browser without requiring a popup handle.');
 
 assert.deepEqual(provider, {
   provider: 'github',

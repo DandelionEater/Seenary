@@ -74,12 +74,22 @@ export function installAtlasRenderer(legacy: Api) {
     return result;
   }
   async function providerAuthorization(provider: 'anilist' | 'mal', mode: 'login' | 'link'): Promise<ProviderLoginResult> {
-    if (window.desktopExternal) {
+    const isDesktop = Boolean(window.desktopExternal || window.desktopUpdater || window.desktopEnvironment);
+    if (isDesktop) {
       const started = await rpc(mode === 'link' ? 'beginProviderLink' : 'beginProviderLogin', [provider, undefined, 'poll'], user?.id);
       if (!started.ok || !started.authorizationUrl || !started.pollToken) {
         return { ok: false, message: started.message || 'Unable to start provider authorization.' };
       }
-      await window.desktopExternal.open(started.authorizationUrl);
+      if (window.desktopExternal) {
+        const opened = await window.desktopExternal.open(started.authorizationUrl);
+        if (!opened.ok) return { ok: false, message: 'Unable to open the authorization page in your browser.' };
+      } else {
+        // Older desktop preloads do not expose desktopExternal. Electron still
+        // hands window.open URLs to the system browser and deliberately returns
+        // no WindowProxy, so a null result is expected here rather than a
+        // popup-blocking failure.
+        window.open(started.authorizationUrl, '_blank');
+      }
       const deadline = Date.now() + 10 * 60000;
       while (Date.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, 750));
