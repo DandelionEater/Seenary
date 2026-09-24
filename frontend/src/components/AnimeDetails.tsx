@@ -144,6 +144,7 @@ export default function MediaDetails({
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [selectedPerson, setSelectedPerson] = useState<PeopleModalItem | null>(null);
   const [expandedArtwork, setExpandedArtwork] = useState<ExpandedArtwork | null>(null);
+  const [isRelationsOpen, setIsRelationsOpen] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [themeMusic, setThemeMusic] = useState<AnimeThemeMusicItem[]>([]);
   const [themeMusicLoading, setThemeMusicLoading] = useState(false);
@@ -683,6 +684,7 @@ export default function MediaDetails({
                       startDate={anime.startDate ?? null}
                       relations={relationEdges}
                       entry={listEntry}
+                      onOpenRelations={() => setIsRelationsOpen(true)}
                     />
                   ) : (
                     <WatchOverview
@@ -694,6 +696,7 @@ export default function MediaDetails({
                       nextAiringEpisode={anime.nextAiringEpisode ?? null}
                       entry={listEntry}
                       relations={relationEdges}
+                      onOpenRelations={() => setIsRelationsOpen(true)}
                     />
                   )}
 
@@ -967,6 +970,17 @@ export default function MediaDetails({
           onClose={() => setExpandedArtwork(null)}
         />
       )}
+
+      {isRelationsOpen && (
+        <RelationsModal
+          edges={relationEdges}
+          onSelectMedia={(relatedId, relatedType) => {
+            setIsRelationsOpen(false);
+            onSelectMedia?.(relatedId, relatedType);
+          }}
+          onClose={() => setIsRelationsOpen(false)}
+        />
+      )}
     </>
   );
 }
@@ -1153,6 +1167,7 @@ type WatchInsight = {
   context: string;
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   accent?: boolean;
+  onClick?: () => void;
 };
 
 function WatchOverview({
@@ -1164,6 +1179,7 @@ function WatchOverview({
   nextAiringEpisode,
   entry,
   relations,
+  onOpenRelations,
 }: {
   episodes: number | null;
   duration: number | null;
@@ -1177,6 +1193,7 @@ function WatchOverview({
   nextAiringEpisode: { episode?: number | null; airingAt?: number | null } | null;
   entry: ListEntry | null;
   relations: RelatedAnimeEdge[];
+  onOpenRelations: () => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
 
@@ -1304,6 +1321,7 @@ function WatchOverview({
           value: `${directRelations.total} linked ${directRelations.total === 1 ? "title" : "titles"}`,
           context: directRelations.summary,
           icon: LinkIcon,
+          onClick: onOpenRelations,
         }
       : null,
   ].filter(Boolean) as WatchInsight[];
@@ -1336,6 +1354,7 @@ function MangaOverview({
   startDate,
   relations,
   entry,
+  onOpenRelations,
 }: {
   chapters: number | null;
   volumes: number | null;
@@ -1347,6 +1366,7 @@ function MangaOverview({
   } | null;
   relations: RelatedAnimeEdge[];
   entry: ListEntry | null;
+  onOpenRelations: () => void;
 }) {
   const [now] = useState(() => Date.now());
   const chapterCount = positiveNumberOrNull(chapters);
@@ -1420,6 +1440,7 @@ function MangaOverview({
           value: `${linkedTitles} linked ${linkedTitles === 1 ? "title" : "titles"}`,
           context: "Anime adaptations and related publications",
           icon: LinkIcon,
+          onClick: onOpenRelations,
         }
       : null,
   ].filter(Boolean) as WatchInsight[];
@@ -1445,15 +1466,8 @@ function MangaOverview({
 
 function WatchInsightCard({ insight }: { insight: WatchInsight }) {
   const Icon = insight.icon;
-
-  return (
-    <div
-      className={`group relative min-w-0 overflow-hidden rounded-2xl border p-4 transition hover:-translate-y-0.5 hover:border-white/18 ${
-        insight.accent
-          ? "border-(--app-accent)/22 bg-(--app-accent-soft)"
-          : "border-white/8 bg-black/18"
-      }`}
-    >
+  const content = (
+    <>
       <div className="flex items-start justify-between gap-3">
         <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/32">
           {insight.label}
@@ -1463,9 +1477,28 @@ function WatchInsightCard({ insight }: { insight: WatchInsight }) {
       <p className="mt-3 truncate text-lg font-semibold tracking-tight text-white/88">
         {insight.value}
       </p>
-      <Tooltip content={insight.context} as="div" className="mt-1 block" focusable>
+      <Tooltip content={insight.context} as="div" className="mt-1 block" focusable={!insight.onClick}>
         <p className="line-clamp-2 text-xs leading-5 text-white/38">{insight.context}</p>
       </Tooltip>
+    </>
+  );
+  const className = `group relative min-w-0 overflow-hidden rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 hover:border-white/18 ${
+    insight.accent
+      ? "border-(--app-accent)/22 bg-(--app-accent-soft)"
+      : "border-white/8 bg-black/18"
+  }`;
+
+  if (insight.onClick) {
+    return (
+      <button type="button" onClick={insight.onClick} className={`${className} cursor-pointer focus:outline-none focus:ring-2 focus:ring-(--app-accent)/55`} aria-label={`View all ${insight.value}`}>
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div className={className}>
+      {content}
     </div>
   );
 }
@@ -2365,17 +2398,21 @@ function InfoPanel({ label, value }: { label: string; value: string }) {
 function RelatedAnimeShelf({
   edges,
   onSelectMedia,
+  showAll = false,
+  bare = false,
 }: {
   edges: RelatedAnimeEdge[];
   onSelectMedia?: (mediaId: number, mediaType: MediaType) => void;
+  showAll?: boolean;
+  bare?: boolean;
 }) {
-  const items = [...edges]
-    .sort((a, b) => getRelationPriority(a?.relationType) - getRelationPriority(b?.relationType))
-    .slice(0, 10);
+  const sortedItems = [...edges].sort(
+    (a, b) => getRelationPriority(a?.relationType) - getRelationPriority(b?.relationType)
+  );
+  const items = showAll ? sortedItems : sortedItems.slice(0, 10);
 
-  return (
-    <ContentSection title="Related titles" icon={LinkIcon}>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+  const content = (
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {items.map((edge, index) => {
           const media = edge.node;
           const relation = getRelationDetails(edge.relationType);
@@ -2467,8 +2504,54 @@ function RelatedAnimeShelf({
             </Tooltip>
           );
         })}
+    </div>
+  );
+
+  return bare ? content : <ContentSection title="Related titles" icon={LinkIcon}>{content}</ContentSection>;
+}
+
+function RelationsModal({
+  edges,
+  onSelectMedia,
+  onClose,
+}: {
+  edges: RelatedAnimeEdge[];
+  onSelectMedia?: (mediaId: number, mediaType: MediaType) => void;
+  onClose: () => void;
+}) {
+  return (
+    <ModalShell
+      onClose={onClose}
+      ariaLabel="All related titles"
+      panelClassName="max-h-[min(48rem,calc(100vh-5rem))] max-w-4xl overflow-hidden p-0 text-white"
+      zClassName="z-60"
+      showCloseButton
+    >
+      <div className="border-b border-white/8 px-6 py-5 pr-20">
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-(--app-accent)/25 bg-(--app-accent-soft) text-white/75">
+            <LinkIcon className="h-5 w-5" />
+          </span>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">
+              Franchise map
+            </p>
+            <h2 className="mt-1 text-xl font-semibold text-white">Related titles</h2>
+          </div>
+        </div>
+        <p className="mt-3 text-sm text-white/45">
+          {edges.length} direct {edges.length === 1 ? "connection" : "connections"}, ordered by relationship.
+        </p>
       </div>
-    </ContentSection>
+      <div className="max-h-[calc(100vh-14rem)] overflow-y-auto p-6">
+        <RelatedAnimeShelf
+          edges={edges}
+          onSelectMedia={onSelectMedia}
+          showAll
+          bare
+        />
+      </div>
+    </ModalShell>
   );
 }
 
