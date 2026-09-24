@@ -1900,18 +1900,23 @@ function ContentSection({
   title,
   icon: Icon,
   children,
+  action,
 }: {
   title: string;
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   children: React.ReactNode;
+  action?: React.ReactNode;
 }) {
   return (
     <section>
-      <div className="mb-3 flex items-center gap-2 text-white/55">
-        <Icon className="h-4 w-4" />
-        <h2 className="text-sm font-semibold uppercase tracking-[0.2em]">
-          {title}
-        </h2>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-white/55">
+          <Icon className="h-4 w-4" />
+          <h2 className="text-sm font-semibold uppercase tracking-[0.2em]">
+            {title}
+          </h2>
+        </div>
+        {action}
       </div>
       {children}
     </section>
@@ -2411,11 +2416,9 @@ function RelatedAnimeShelf({
   const sortedItems = [...edges].sort(
     (a, b) => getRelationPriority(a?.relationType) - getRelationPriority(b?.relationType)
   );
-  const items = showAll ? sortedItems : sortedItems.slice(0, 10);
+  const items = sortedItems;
 
-  const content = (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        {items.map((edge, index) => {
+  const cards = items.map((edge, index) => {
           const media = edge.node;
           const relation = getRelationDetails(edge.relationType);
           const titleText = getMediaTitle(media);
@@ -2505,11 +2508,15 @@ function RelatedAnimeShelf({
             </button>
             </Tooltip>
           );
-        })}
-    </div>
-  );
+        });
 
-  return bare ? content : <ContentSection title="Related titles" icon={LinkIcon}>{content}</ContentSection>;
+  if (bare || showAll) {
+    return <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{cards}</div>;
+  }
+
+  return (
+    <ExpandableCardShelf title="Related titles" icon={LinkIcon} cards={cards} />
+  );
 }
 
 function RelationsModal({
@@ -2568,73 +2575,116 @@ function MediaShelf({
   items: Array<{ label: string; media: RecommendationMedia }>;
   onSelectMedia?: (mediaId: number, mediaType: MediaType) => void;
 }) {
+  const cards = items.map(({ label, media }, index) => {
+    const titleText = getMediaTitle(media);
+    const mediaId = Number(media?.id);
+    const recommendationType = getRelatedMediaType(media);
+    const canOpen =
+      Boolean(recommendationType) &&
+      Number.isInteger(mediaId) &&
+      mediaId > 0 &&
+      Boolean(onSelectMedia);
+
+    const tooltipLabel = canOpen ? `Open ${titleText}` : titleText;
+
+    return (
+      <Tooltip key={`${media?.id ?? index}-${label}`} content={tooltipLabel} as="div" className="block">
+      <button
+        type="button"
+        onClick={() =>
+          canOpen && recommendationType && onSelectMedia?.(mediaId, recommendationType)
+        }
+        disabled={!canOpen}
+        className="group flex w-full min-w-0 gap-3 rounded-2xl border border-white/10 bg-white/3 p-3 text-left transition hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-white/35 disabled:cursor-default disabled:hover:translate-y-0 disabled:hover:border-white/10 disabled:hover:bg-white/3"
+        aria-label={tooltipLabel}
+      >
+        <div className="h-20 w-14 shrink-0 overflow-hidden rounded-xl bg-white/5">
+          {media?.coverImage?.large ? (
+            <img
+              src={media.coverImage.large}
+              alt={titleText}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="h-full w-full bg-white/5" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1 py-1">
+          <div className="flex min-w-0 items-start gap-2">
+            <p className="line-clamp-2 min-w-0 flex-1 text-sm font-semibold leading-5 text-white/85">
+              {titleText}
+            </p>
+          </div>
+          <p className="mt-2 truncate text-xs text-white/45">{label}</p>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {media?.format && (
+              <span className="rounded-full bg-white/8 px-2 py-1 text-[11px] text-white/45">
+                {media.format}
+              </span>
+            )}
+            {recommendationType && (
+              <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/40">
+                {recommendationType === "MANGA" ? "Manga" : "Anime"}
+              </span>
+            )}
+            {media?.averageScore && (
+              <span className="rounded-full bg-white/8 px-2 py-1 text-[11px] text-white/45">
+                {media.averageScore}%
+              </span>
+            )}
+          </div>
+        </div>
+      </button>
+      </Tooltip>
+    );
+  });
+
   return (
-    <ContentSection title={title} icon={Icon}>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        {items.slice(0, 10).map(({ label, media }, index) => {
-          const titleText = getMediaTitle(media);
-          const mediaId = Number(media?.id);
-          const recommendationType = getRelatedMediaType(media);
-          const canOpen =
-            Boolean(recommendationType) &&
-            Number.isInteger(mediaId) &&
-            mediaId > 0 &&
-            Boolean(onSelectMedia);
+    <ExpandableCardShelf title={title} icon={Icon} cards={cards} />
+  );
+}
 
-          const tooltipLabel = canOpen ? `Open ${titleText}` : titleText;
+function ExpandableCardShelf({
+  title,
+  icon,
+  cards,
+}: {
+  title: string;
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+  cards: React.ReactNode[];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const overflowCards = cards.slice(4);
+  const toggle = overflowCards.length > 0 ? (
+    <button
+      type="button"
+      onClick={() => setExpanded((current) => !current)}
+      className="flex shrink-0 items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/60 transition hover:bg-white/10 hover:text-white/85 focus:outline-none focus:ring-2 focus:ring-(--app-accent)/55"
+      aria-expanded={expanded}
+    >
+      {expanded ? "Show less" : `Show all ${cards.length}`}
+      <ChevronDownIcon
+        className={`h-3.5 w-3.5 transition-transform duration-500 ${expanded ? "rotate-180" : ""}`}
+      />
+    </button>
+  ) : undefined;
 
-          return (
-            <Tooltip key={`${media?.id ?? index}-${label}`} content={tooltipLabel} as="div" className="block">
-            <button
-              type="button"
-              onClick={() =>
-                canOpen && recommendationType && onSelectMedia?.(mediaId, recommendationType)
-              }
-              disabled={!canOpen}
-              className="group flex w-full min-w-0 gap-3 rounded-2xl border border-white/10 bg-white/3 p-3 text-left transition hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-white/35 disabled:cursor-default disabled:hover:translate-y-0 disabled:hover:border-white/10 disabled:hover:bg-white/3"
-              aria-label={tooltipLabel}
-            >
-              <div className="h-20 w-14 shrink-0 overflow-hidden rounded-xl bg-white/5">
-                {media?.coverImage?.large ? (
-                  <img
-                    src={media.coverImage.large}
-                    alt={titleText}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <div className="h-full w-full bg-white/5" />
-                )}
-              </div>
-              <div className="min-w-0 flex-1 py-1">
-                <div className="flex min-w-0 items-start gap-2">
-                  <p className="line-clamp-2 min-w-0 flex-1 text-sm font-semibold leading-5 text-white/85">
-                    {titleText}
-                  </p>
-                </div>
-                <p className="mt-2 truncate text-xs text-white/45">{label}</p>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {media?.format && (
-                    <span className="rounded-full bg-white/8 px-2 py-1 text-[11px] text-white/45">
-                      {media.format}
-                    </span>
-                  )}
-                  {recommendationType && (
-                    <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/40">
-                      {recommendationType === "MANGA" ? "Manga" : "Anime"}
-                    </span>
-                  )}
-                  {media?.averageScore && (
-                    <span className="rounded-full bg-white/8 px-2 py-1 text-[11px] text-white/45">
-                      {media.averageScore}%
-                    </span>
-                  )}
-                </div>
-              </div>
-            </button>
-            </Tooltip>
-          );
-        })}
-      </div>
+  return (
+    <ContentSection title={title} icon={icon} action={toggle}>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{cards.slice(0, 4)}</div>
+      {overflowCards.length > 0 && (
+        <div
+          className={`grid transition-[grid-template-rows,opacity] duration-500 ease-in-out ${
+            expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+          }`}
+          aria-hidden={!expanded}
+          inert={!expanded}
+        >
+          <div className="min-h-0 overflow-hidden">
+            <div className="grid grid-cols-1 gap-3 pt-3 md:grid-cols-2">{overflowCards}</div>
+          </div>
+        </div>
+      )}
     </ContentSection>
   );
 }

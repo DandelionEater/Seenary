@@ -17,4 +17,5 @@ Tag: `v0.2.2-beta`
 - Restored franchise-age calculation in Anime details and removed stray zeroes from media badge rows when episode or publication counts are unknown.
 - Made anime theme music resilient to AnimeThemes outages: saved results remain available, uncached sections hide cleanly, and provider failures no longer appear as account-operation errors.
 - Added a complete related-titles modal to the direct-connections summary on Anime and Manga details.
+- Related titles and recommendations now show four cards initially and expand or collapse with the same compact control used by streaming episodes.
 - Restored the hosted analytics report endpoint used by Seenary operations.
