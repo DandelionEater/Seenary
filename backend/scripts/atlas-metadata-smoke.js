@@ -85,6 +85,7 @@ async function main() {
     async studio(id) { calls++; if (offline) throw new Error('Provider disabled'); return { studio: { id, name: 'Studio' }, items: [{ media: clone(raw) }], pageInfo: { currentPage: 1, hasNextPage: false } }; },
     async artistAssociations() { calls++; if (offline) throw new Error('AnimeThemes disabled'); return { artist: { id: 501, name: 'Artist name' }, items: [{ anilistId: 1,
       artist: { id: 501, name: 'Artist name' }, song: { id: 44 }, theme: { id: 55 }, media: { id: 999, type: 'ANIME', title: { romaji: 'Not trusted AniList metadata' } } }], pageInfo: { currentPage: 1, hasNextPage: false } }; },
+    async themes(id) { calls++; if (offline) throw new Error('AnimeThemes disabled'); return [{ song: { id: 44 }, theme: { id: 55 }, anilistId: id }]; },
     async cards() { calls++; if (offline) throw new Error('AniList disabled'); return [clone(raw)]; },
     async collection(type) { calls++; const entry = { media: { ...clone(raw), type }, status: 'REPEATING', score: 3, notes: 'PRIVATE_IMPORT_NOTE', progress: 25, progressVolumes: 2, repeat: 1,
       startedAt: { year: 2020 }, completedAt: { year: 2020, month: 6, day: 7 } }; return { lists: [{ entries: [entry] }, { entries: [entry] }] }; },
@@ -101,6 +102,10 @@ async function main() {
   const afterFranchiseCall = calls;
   assert.deepEqual(await service.franchiseStartDate(1), { year: 2020, month: 10, day: 3 });
   assert.equal(calls, afterFranchiseCall, 'franchise start dates use their dedicated cache');
+  assert.equal((await service.query('getAnimeThemeMusic', [1, ['Saved title']])).length, 1);
+  offline = true;
+  assert.deepEqual(await service.query('getAnimeThemeMusic', [2, ['Unavailable title']]), [], 'AnimeThemes outages degrade to an empty optional section');
+  offline = false;
   clock += 1000;
   await service.query('searchMedia', ['New name', true]);
   const afterCard = await media.byProvider('ANIME', 'anilist', 1);

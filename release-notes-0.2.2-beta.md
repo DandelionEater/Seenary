@@ -15,4 +15,5 @@ Tag: `v0.2.2-beta`
 - Desktop provider authorization continues in the user's default browser and reliably returns the result to Seenary through callback polling.
 - Library edits now carry their latest local and cloud activity timestamps into the interface, including while an edit is waiting to upload.
 - Restored franchise-age calculation in Anime details and removed stray zeroes from media badge rows when episode or publication counts are unknown.
+- Made anime theme music resilient to AnimeThemes outages: saved results remain available, uncached sections hide cleanly, and provider failures no longer appear as account-operation errors.
 - Restored the hosted analytics report endpoint used by Seenary operations.

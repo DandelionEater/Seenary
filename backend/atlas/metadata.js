@@ -266,10 +266,16 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
         const id = Number(args[0]);
         const titles = Array.isArray(args[1]) ? args[1].filter(value => typeof value === 'string' && value.trim()).slice(0, 20).map(value => value.trim().slice(0, 300)) : [];
         if (!validId(id)) throw new Error('Invalid Anime identity.');
-        const result = await fetchCached(JSON.stringify(['animethemes:title', id, titles]), () => provider.themes(id, titles), 24 * HOUR, payload => {
-          if (!Array.isArray(payload) || payload.length > 500) throw new Error('Invalid AnimeThemes response.');
-        });
-        return result.stale ? result.payload.map(item => ({ ...item, cache: { stale: true } })) : result.payload;
+        try {
+          const result = await fetchCached(JSON.stringify(['animethemes:title', id, titles]), () => provider.themes(id, titles), 24 * HOUR, payload => {
+            if (!Array.isArray(payload) || payload.length > 500) throw new Error('Invalid AnimeThemes response.');
+          });
+          return result.stale ? result.payload.map(item => ({ ...item, cache: { stale: true } })) : result.payload;
+        } catch {
+          // Theme music is optional enrichment. An AnimeThemes outage must not fail
+          // the entire details request or repeatedly surface an account error.
+          return [];
+        }
       }
       if (method === 'searchMedia') {
         const text = String(args[0] || '').trim();

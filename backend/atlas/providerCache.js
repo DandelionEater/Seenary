@@ -11,7 +11,8 @@ function createProviderCache({ queries, now = () => Date.now(), requestSpacingMs
     try {
       const name = JSON.parse(key)?.[0];
       return ({ searchMedia: 'search', getDiscoverMedia: 'discovery', getDiscoverShelfAnime: 'shelf',
-        getStudioMedia: 'studio', 'animethemes:artist': 'artist', 'anilist:artist-cards': 'artist-cards' })[name] || 'other';
+        getStudioMedia: 'studio', 'animethemes:artist': 'artist', 'animethemes:title': 'theme-music',
+        'anilist:artist-cards': 'artist-cards' })[name] || 'other';
     } catch { return 'other'; }
   }
   async function touch(id, cached) {
