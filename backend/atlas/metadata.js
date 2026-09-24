@@ -330,7 +330,7 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
         if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end <= start || end - start > 14 * 86400 || !['ANIME', 'MANGA'].includes(type)) throw new Error('Invalid release calendar window.');
         const hideAdultContent = hideAdult !== false;
         try {
-          const result = await fetchCached(JSON.stringify([method, start, end, hideAdultContent, type]), () => provider.calendar(start, end, hideAdultContent, type), HOUR, (payload, time) => {
+          const result = await fetchCached(JSON.stringify([method, start, end, hideAdultContent, type]), () => provider.calendar(start, end, hideAdultContent, type), 24 * HOUR, (payload, time) => {
             if (!Array.isArray(payload?.items) || payload.items.length > 500) throw new Error('Invalid release calendar response.');
             return ingestTree(payload.items.map(item => item.media), type, time);
           });
