@@ -958,6 +958,8 @@ declare global {
         discoverLayoutOrder?: string[];
         myListSectionOrder?: string[];
         mangaMyListSectionOrder?: string[];
+        personalGridLayout?: Array<{ id: string; columns: number; rows: number; orientation?: "horizontal" | "vertical" }>;
+        mangaPersonalGridLayout?: Array<{ id: string; columns: number; rows: number; orientation?: "horizontal" | "vertical" }>;
       }>;
       setLayoutOrders: (
         userId: number,
@@ -967,6 +969,8 @@ declare global {
           discoverLayoutOrder?: string[];
           myListSectionOrder?: string[];
           mangaMyListSectionOrder?: string[];
+          personalGridLayout?: Array<{ id: string; columns: number; rows: number; orientation?: "horizontal" | "vertical" }>;
+          mangaPersonalGridLayout?: Array<{ id: string; columns: number; rows: number; orientation?: "horizontal" | "vertical" }>;
         }
       ) => {
         ok: boolean;

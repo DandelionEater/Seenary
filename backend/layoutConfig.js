@@ -2,7 +2,7 @@ const { app, ipcMain } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
-const CONFIG_VERSION = 1;
+const CONFIG_VERSION = 2;
 const CONFIG_FILE = 'seenary-config.json';
 const CONFIG_BACKUP_FILE = 'seenary-config.backup.json';
 const LAYOUT_KEYS = new Set([
@@ -12,6 +12,8 @@ const LAYOUT_KEYS = new Set([
   'myListSectionOrder',
   'mangaMyListSectionOrder',
 ]);
+const GRID_LAYOUT_KEYS = new Set(['personalGridLayout', 'mangaPersonalGridLayout']);
+const GRID_WIDGET_IDS = new Set(['spotlight', 'account', 'stats', 'activity', 'continue', 'planned', 'sinceLiked']);
 
 function getConfigPath() {
   return path.join(app.getPath('userData'), CONFIG_FILE);
@@ -47,7 +49,29 @@ function normalizeUserLayouts(value) {
     }
   }
 
+  for (const key of GRID_LAYOUT_KEYS) {
+    const layout = normalizeGridLayout(value?.[key]);
+    if (layout) layouts[key] = layout;
+  }
+
   return layouts;
+}
+
+function normalizeGridLayout(value) {
+  if (!Array.isArray(value)) return null;
+  const seen = new Set();
+  const layout = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)
+        || !GRID_WIDGET_IDS.has(candidate.id) || seen.has(candidate.id)
+        || !Number.isInteger(candidate.columns) || candidate.columns < 1 || candidate.columns > 12
+        || !Number.isInteger(candidate.rows) || candidate.rows < 1 || candidate.rows > 20
+        || candidate.orientation != null && !['horizontal', 'vertical'].includes(candidate.orientation)) continue;
+    seen.add(candidate.id);
+    layout.push({ id: candidate.id, columns: candidate.columns, rows: candidate.rows,
+      ...(candidate.orientation ? { orientation: candidate.orientation } : {}) });
+  }
+  return layout.length ? layout : null;
 }
 
 function normalizeConfig(value) {
@@ -55,7 +79,7 @@ function normalizeConfig(value) {
 
   if (value?.users && typeof value.users === 'object') {
     for (const [userId, layouts] of Object.entries(value.users)) {
-      if (/^[1-9]\d*$/.test(userId)) {
+      if (/^-?[1-9]\d*$/.test(userId)) {
         users[userId] = normalizeUserLayouts(layouts);
       }
     }
@@ -106,7 +130,7 @@ function writeConfig(config) {
 
 function normalizeUserId(value) {
   const userId = Number(value);
-  return Number.isInteger(userId) && userId > 0 ? String(userId) : null;
+  return Number.isSafeInteger(userId) && userId !== 0 ? String(userId) : null;
 }
 
 function getLayoutOrders(userIdValue) {
@@ -146,6 +170,12 @@ function setLayoutOrders(userIdValue, payload) {
       return { ok: false, message: `Invalid ${key}.` };
     }
     current[key] = order;
+  }
+  for (const key of GRID_LAYOUT_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(payload, key)) continue;
+    const layout = normalizeGridLayout(payload[key]);
+    if (!layout) return { ok: false, message: `Invalid ${key}.` };
+    current[key] = layout;
   }
 
   config.users[userId] = current;

@@ -574,6 +574,7 @@ export function HomePage({
     PersonalGridItem[]
   >(() => readMangaPersonalGridLayout(userId));
   const mangaPersonalGridLayoutRef = useRef(mangaPersonalGridLayout);
+  const desktopGridLayoutUserRef = useRef<number | null>(null);
   const [selectedMangaPersonalGridWidget, setSelectedMangaPersonalGridWidget] =
     useState<PersonalGridWidgetId | null>(null);
   const [draggedMangaPersonalGridWidget, setDraggedMangaPersonalGridWidget] =
@@ -661,6 +662,7 @@ export function HomePage({
   const homeScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    desktopGridLayoutUserRef.current = null;
     setRecentMediaHistory(readRecentMediaHistory(userId));
     const nextGridLayout = readPersonalGridLayout(userId);
     personalGridLayoutRef.current = nextGridLayout;
@@ -679,11 +681,19 @@ export function HomePage({
   useEffect(() => {
     personalGridLayoutRef.current = personalGridLayout;
     persistPersonalGridLayout(userId, personalGridLayout);
+    if (desktopGridLayoutUserRef.current === userId) {
+      const result = window.desktopConfig?.setLayoutOrders(userId, { personalGridLayout });
+      if (result && !result.ok) console.warn(result.message || "Failed to save Personal grid layout.");
+    }
   }, [personalGridLayout, userId]);
 
   useEffect(() => {
     mangaPersonalGridLayoutRef.current = mangaPersonalGridLayout;
     persistMangaPersonalGridLayout(userId, mangaPersonalGridLayout);
+    if (desktopGridLayoutUserRef.current === userId) {
+      const result = window.desktopConfig?.setLayoutOrders(userId, { mangaPersonalGridLayout });
+      if (result && !result.ok) console.warn(result.message || "Failed to save Manga grid layout.");
+    }
   }, [mangaPersonalGridLayout, userId]);
 
   function handleDismissRecentMedia(entry: RecentMediaHistoryEntry) {
@@ -729,7 +739,27 @@ export function HomePage({
           personalLayoutOrder?: string[];
           mangaPersonalLayoutOrder?: string[];
           discoverLayoutOrder?: string[];
+          personalGridLayout?: PersonalGridItem[];
+          mangaPersonalGridLayout?: PersonalGridItem[];
         } = {};
+
+        if (result.personalGridLayout) {
+          const layout = normalizePersonalGridLayout(result.personalGridLayout);
+          personalGridLayoutRef.current = layout;
+          persistPersonalGridLayout(userId, layout);
+          setPersonalGridLayout(layout);
+        } else {
+          missingLayouts.personalGridLayout = personalGridLayoutRef.current;
+        }
+
+        if (result.mangaPersonalGridLayout) {
+          const layout = normalizePersonalGridLayout(result.mangaPersonalGridLayout);
+          mangaPersonalGridLayoutRef.current = layout;
+          persistMangaPersonalGridLayout(userId, layout);
+          setMangaPersonalGridLayout(layout);
+        } else {
+          missingLayouts.mangaPersonalGridLayout = mangaPersonalGridLayoutRef.current;
+        }
 
         if (result.personalLayoutOrder) {
           const order = normalizePersonalLayoutOrder(result.personalLayoutOrder);
@@ -769,6 +799,7 @@ export function HomePage({
         if (Object.keys(missingLayouts).length > 0) {
           desktopConfig.setLayoutOrders(userId, missingLayouts);
         }
+        desktopGridLayoutUserRef.current = userId;
       } catch (error) {
         console.warn("Failed to load desktop layout configuration:", error);
       }

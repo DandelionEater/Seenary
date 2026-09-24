@@ -53,6 +53,7 @@
     "test:cache-maintenance": "node scripts/cache-maintenance-smoke.js",
     "test:mal-pipeline": "node scripts/mal-pipeline-smoke.js",
     "test:updater": "node scripts/updater-config-smoke.js",
+    "test:layout-config": "node scripts/layout-config-smoke.js",
     "security:check": "node scripts/run-security-smoke.js",
     "analytics:export": "node scripts/export-engagement-analytics.js",
     "test:analytics": "node scripts/engagement-analytics-smoke.js",
