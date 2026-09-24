@@ -6,6 +6,7 @@ Tag: `v0.2.2-beta`
 
 - Provider sync activity now presents completed pulls as readable summaries instead of internal operation data.
 - The Personal spotlight now follows the latest activity within the current Watching or Reading list, with Planned titles used when no active title is available.
+- The personalized recommendation section now grows and shrinks with its contents instead of leaving an oversized empty area or clipping its last recommendation.
 
 ## Reliability and fixes
 

@@ -2826,6 +2826,8 @@ function PersonalGridDashboard({
   onDragEnd: () => void;
 }) {
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const autoHeightWidgetRefs = useRef(new Map<PersonalGridWidgetId, HTMLDivElement>());
+  const [automaticRows, setAutomaticRows] = useState<Partial<Record<PersonalGridWidgetId, number>>>({});
   const resizeSessionRef = useRef<{
     widgetId: PersonalGridWidgetId;
     pointerId: number;
@@ -2844,6 +2846,29 @@ function PersonalGridDashboard({
         backgroundSize: "calc(100% / 12) 4.75rem",
       }
     : undefined;
+
+  useLayoutEffect(() => {
+    if (isEditing || typeof ResizeObserver === "undefined") {
+      setAutomaticRows({});
+      return;
+    }
+
+    const grid = gridRef.current;
+    const content = autoHeightWidgetRefs.current.get("sinceLiked");
+    if (!grid || !content) return;
+
+    const updateRows = () => {
+      const styles = window.getComputedStyle(grid);
+      const rowHeight = Number.parseFloat(styles.gridAutoRows) || 60;
+      const rowGap = Number.parseFloat(styles.rowGap) || 0;
+      const rows = Math.max(1, Math.ceil((content.scrollHeight + rowGap) / (rowHeight + rowGap)));
+      setAutomaticRows((current) => current.sinceLiked === rows ? current : { ...current, sinceLiked: rows });
+    };
+    const observer = new ResizeObserver(updateRows);
+    observer.observe(content);
+    updateRows();
+    return () => observer.disconnect();
+  }, [isEditing, layout]);
 
   function handleResizeStart(
     item: PersonalGridItem,
@@ -2940,6 +2965,8 @@ function PersonalGridDashboard({
       {layout.map((item, index) => {
         const selected = selectedWidget === item.id;
         const isShelf = PERSONAL_GRID_SHELF_IDS.has(item.id);
+        const usesAutomaticHeight = item.id === "sinceLiked" && !isEditing;
+        const effectiveRows = usesAutomaticHeight ? automaticRows[item.id] ?? item.rows : item.rows;
 
         return (
           <div
@@ -2952,10 +2979,10 @@ function PersonalGridDashboard({
             style={
               {
                 "--personal-grid-columns": item.columns,
-                "--personal-grid-rows": item.rows,
+                "--personal-grid-rows": effectiveRows,
               } as React.CSSProperties
             }
-            className={`personal-grid-widget relative min-w-0 overflow-hidden transition-all duration-200 ${
+            className={`personal-grid-widget relative min-w-0 ${usesAutomaticHeight ? "self-start overflow-visible" : "overflow-hidden"} transition-all duration-200 ${
               isEditing
                 ? `cursor-pointer rounded-[1.75rem] border border-dashed ${
                     selected
@@ -3044,7 +3071,12 @@ function PersonalGridDashboard({
             )}
 
             <div
-              className={`${isEditing ? "pointer-events-none select-none" : ""} h-full [&>*]:h-full [&>*]:w-full`}
+              ref={(element) => {
+                if (item.id !== "sinceLiked") return;
+                if (element) autoHeightWidgetRefs.current.set(item.id, element);
+                else autoHeightWidgetRefs.current.delete(item.id);
+              }}
+              className={`${isEditing ? "pointer-events-none select-none" : ""} ${usesAutomaticHeight ? "h-auto [&>*]:h-auto" : "h-full [&>*]:h-full"} [&>*]:w-full`}
             >
               {renderWidget(item)}
             </div>
