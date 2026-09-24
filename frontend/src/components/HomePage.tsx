@@ -11,6 +11,7 @@ import {
   ChartBarIcon,
   CheckIcon,
   CheckCircleIcon,
+  ChevronDownIcon,
   ClockIcon,
   ExclamationTriangleIcon,
   FireIcon,
@@ -3477,6 +3478,7 @@ function ReleaseCalendarModal({
   const [result, setResult] = useState<ReleaseCalendarResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [collapsedDays, setCollapsedDays] = useState<Set<string>>(() => new Set());
   const weekStart = useMemo(() => {
     const date = new Date();
     date.setHours(0, 0, 0, 0);
@@ -3488,6 +3490,17 @@ function ReleaseCalendarModal({
     () => new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 7),
     [weekStart]
   );
+
+  useEffect(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const initiallyCollapsed = new Set<string>();
+    for (let index = 0; index < 7; index += 1) {
+      const date = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + index);
+      if (date < today) initiallyCollapsed.add(date.toISOString());
+    }
+    setCollapsedDays(initiallyCollapsed);
+  }, [weekStart]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3578,15 +3591,38 @@ function ReleaseCalendarModal({
         ) : (
           <div className="space-y-4">
             {result?.warning && <p className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-xs text-amber-100">{result.warning}</p>}
-            {days.map(({ date, items }) => (
-              <section key={date.toISOString()} className="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
+            {days.map(({ date, items }) => {
+              const dayKey = date.toISOString();
+              const isCollapsed = collapsedDays.has(dayKey);
+              return (
+              <section key={dayKey} className="overflow-hidden rounded-2xl border border-white/8 bg-white/[0.025]">
+                <button
+                  type="button"
+                  onClick={() => setCollapsedDays((current) => {
+                    const next = new Set(current);
+                    if (next.has(dayKey)) next.delete(dayKey);
+                    else next.add(dayKey);
+                    return next;
+                  })}
+                  aria-expanded={!isCollapsed}
+                  className="flex w-full items-center justify-between gap-3 p-4 text-left transition hover:bg-white/[0.035] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-(--app-accent)/45"
+                >
                   <div>
                     <h3 className="text-sm font-semibold text-white/80">{date.toLocaleDateString(undefined, { weekday: "long" })}</h3>
                     <p className="mt-0.5 text-xs text-white/35">{date.toLocaleDateString(undefined, { month: "long", day: "numeric" })}</p>
                   </div>
-                  <span className="rounded-full bg-white/6 px-2.5 py-1 text-[10px] text-white/35">{items.length}</span>
-                </div>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-white/6 px-2.5 py-1 text-[10px] text-white/35">{items.length}</span>
+                    <ChevronDownIcon className={`h-4 w-4 text-white/35 transition-transform duration-300 ${isCollapsed ? "-rotate-90" : ""}`} />
+                  </div>
+                </button>
+                <div
+                  className={`grid transition-[grid-template-rows,opacity] duration-400 ease-in-out ${isCollapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"}`}
+                  aria-hidden={isCollapsed}
+                  inert={isCollapsed}
+                >
+                  <div className="min-h-0 overflow-hidden">
+                    <div className="border-t border-white/6 p-4 pt-3">
                 {items.length ? (
                   <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                     {items.map((item, index) => {
@@ -3620,8 +3656,12 @@ function ReleaseCalendarModal({
                 ) : (
                   <p className="rounded-xl border border-dashed border-white/8 px-3 py-4 text-xs text-white/28">No known releases.</p>
                 )}
+                    </div>
+                  </div>
+                </div>
               </section>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
