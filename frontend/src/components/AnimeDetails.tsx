@@ -1321,6 +1321,7 @@ function WatchOverview({
           value: `${directRelations.total} linked ${directRelations.total === 1 ? "title" : "titles"}`,
           context: directRelations.summary,
           icon: LinkIcon,
+          accent: true,
           onClick: onOpenRelations,
         }
       : null,
@@ -1440,6 +1441,7 @@ function MangaOverview({
           value: `${linkedTitles} linked ${linkedTitles === 1 ? "title" : "titles"}`,
           context: "Anime adaptations and related publications",
           icon: LinkIcon,
+          accent: true,
           onClick: onOpenRelations,
         }
       : null,
