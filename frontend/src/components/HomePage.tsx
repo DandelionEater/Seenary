@@ -4019,7 +4019,7 @@ function DiscoverAnimeCard({
           key: "format",
           icon: mediaType === "MANGA" ? BookOpenIcon : TvIcon,
           tone: "sky" as const,
-          label: anime.format,
+          label: formatCompactMediaFormat(anime.format),
         }
       : null,
     score
@@ -5191,7 +5191,9 @@ function HomeAnimeCard({
           {progress || subMeta.join(" - ") || formatStatus(entry.status)}
         </p>
         <div className={densityStyles.mediumMetaClass}>
-          {entry.format && <SmallInfoPill icon={TvIcon}>{entry.format}</SmallInfoPill>}
+          {entry.format && (
+            <SmallInfoPill icon={TvIcon}>{formatCompactMediaFormat(entry.format)}</SmallInfoPill>
+          )}
           {score && <SmallInfoPill icon={StarIcon}>{score}</SmallInfoPill>}
           {entry.duration && (
             <SmallInfoPill icon={ClockIcon}>{entry.duration} min</SmallInfoPill>
@@ -5216,7 +5218,7 @@ function RecommendationLibraryCard({
 }) {
   const title = getPreferredTitle(entry.title, titleLanguage);
   const meta = [
-    entry.format,
+    entry.format ? formatCompactMediaFormat(entry.format) : null,
     entry.season && entry.seasonYear
       ? `${formatEnum(entry.season)} ${entry.seasonYear}`
       : entry.seasonYear
@@ -5335,7 +5337,7 @@ function SinceYouLikedPairCard({
     ? getPreferredTitle(entry.source.title, titleLanguage)
     : "Favorite pick";
   const recommendedMeta = [
-    entry.format,
+    entry.format ? formatCompactMediaFormat(entry.format) : null,
     entry.episodes ? `${entry.episodes} eps` : null,
     typeof entry.averageScore === "number" && entry.averageScore > 0
       ? `Avg ${formatScore10(entry.averageScore / 10)}`
@@ -5371,7 +5373,9 @@ function SinceYouLikedPairCard({
             </h3>
             <div className="mt-2.5 flex flex-wrap gap-1.5">
               {entry.source?.format && (
-                <SmallInfoPill icon={MediaIcon}>{entry.source.format}</SmallInfoPill>
+                <SmallInfoPill icon={MediaIcon}>
+                  {formatCompactMediaFormat(entry.source.format)}
+                </SmallInfoPill>
               )}
               {typeof entry.source?.score === "number" && entry.source.score > 0 && (
                 <SmallInfoPill icon={StarIcon}>Mine {entry.source.score}</SmallInfoPill>
@@ -5874,14 +5878,13 @@ function formatStatus(status: TrackedAnimeEntry["status"]) {
 
 function buildEntryMeta(entry: TrackedAnimeEntry) {
   return [
-    entry.format,
+    entry.format ? formatCompactMediaFormat(entry.format) : null,
     entry.season && entry.season_year
       ? `${formatEnum(entry.season)} ${entry.season_year}`
       : entry.season_year
       ? `${entry.season_year}`
       : null,
     entry.duration ? `${entry.duration} min` : null,
-    entry.source ? formatEnum(entry.source) : null,
   ].filter(Boolean) as string[];
 }
 
@@ -5946,6 +5949,23 @@ function normalizeWatchedMinutes(totalMinutes: number) {
 
 function formatCompactSeason(season: string, year: number) {
   return `${formatEnum(season)} '${String(year).slice(-2)}`;
+}
+
+function formatCompactMediaFormat(format: string) {
+  const labels: Record<string, string> = {
+    TV: "TV",
+    TV_SHORT: "Short",
+    MOVIE: "Movie",
+    SPECIAL: "Special",
+    OVA: "OVA",
+    ONA: "ONA",
+    MUSIC: "Music",
+    MANGA: "Manga",
+    NOVEL: "Novel",
+    ONE_SHOT: "One-shot",
+  };
+
+  return labels[format] ?? formatEnum(format);
 }
 
 function getDisplayScore(entry: TrackedAnimeEntry) {
