@@ -162,6 +162,7 @@ function createStagingServer(service, providers = null, media = null, library = 
           break;
         }
         case 'getAnimeDetails':
+        case 'getAnimeFranchiseStartDate':
         case 'getMediaDetails':
         case 'searchMedia':
         case 'getDiscoverShelfAnime':
@@ -173,7 +174,8 @@ function createStagingServer(service, providers = null, media = null, library = 
         case 'getDiscoverMedia': {
           if (!metadata) { send(503, { ok: false, message: 'Metadata cache is unavailable.' }); return; }
           if (!(await service.getSession(token)).authenticated) { send(401, { ok: false }); return; }
-          result = body.method === 'getAnimeDetails' ? await metadata.details('ANIME', body.args[0])
+          result = body.method === 'getAnimeFranchiseStartDate' ? { franchiseStartDate: await metadata.franchiseStartDate(body.args[0]) }
+            : body.method === 'getAnimeDetails' ? await metadata.details('ANIME', body.args[0])
             : body.method === 'getMediaDetails' ? await metadata.details(body.args[0], body.args[1])
               : await metadata.query(body.method, body.args);
           break;

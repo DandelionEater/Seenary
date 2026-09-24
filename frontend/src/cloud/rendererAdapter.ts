@@ -492,6 +492,7 @@ export function installAtlasRenderer(legacy: Api) {
     resolveMyMangaListConflict: (id: number, choice: 'cloud' | 'device') => resolveConflict('MANGA', id, choice),
     clearMyList: (options?: { queueProviderDeletion?: boolean }) => clear('ANIME', options), clearMyMangaList: (options?: { queueProviderDeletion?: boolean }) => clear('MANGA', options), clearAllMediaLists: (options?: { queueProviderDeletion?: boolean }) => clear(undefined, options),
     getAnimeDetails: (id: number) => details('ANIME', id), getMediaDetails: (type: Entry['type'], id: number) => details(type, id),
+    getAnimeFranchiseStartDate: (id: number) => rpc('getAnimeFranchiseStartDate', [id], user?.id),
     searchMedia: (text: string, hideAdultContent = true) => rpc('searchMedia', [text, hideAdultContent], user?.id),
     getDiscoverMedia: (hideAdultContent = true) => rpc('getDiscoverMedia', [hideAdultContent], user?.id),
     getDiscoverShelfAnime: (shelfId: string, page = 1, hideAdultContent = true, mediaType = 'ANIME') => rpc('getDiscoverShelfAnime', [shelfId, page, hideAdultContent, mediaType], user?.id),

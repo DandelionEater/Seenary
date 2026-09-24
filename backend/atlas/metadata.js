@@ -138,6 +138,14 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
   }
   return {
     ingest,
+    async franchiseStartDate(id) {
+      if (!validId(id)) throw new Error('Invalid Anime identity.');
+      const details = await this.details('ANIME', id);
+      const result = await fetchCached(`franchise-start:${id}`, () => provider.franchiseStartDate(details), 30 * DAY, payload => {
+        if (!payload?.year || !Number.isInteger(Number(payload.year))) throw new Error('Invalid franchise start date.');
+      });
+      return result.payload;
+    },
     async previewMalImport(username) {
       if (!malImport) throw new Error('MAL imports are unavailable.');
       return malImport.preview(username);

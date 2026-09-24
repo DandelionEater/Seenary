@@ -5,6 +5,7 @@ const animethemes = require('../animethemes');
 function createAniListMetadataProvider() {
   return {
     details: (type, id) => type === 'ANIME' ? anilist.getAnimeDetails(id, { includeFranchiseStartDate: false }) : anilist.getMangaDetails(id),
+    franchiseStartDate: media => anilist.findAnimeSeriesStartDate(media),
     search: (text, hideAdultContent) => anilist.searchMedia(text, { hideAdultContent }),
     discover: hideAdultContent => anilist.getDiscoverMedia({ hideAdultContent }),
     shelf: (shelfId, page, hideAdultContent, mediaType) => anilist.getDiscoverShelfAnime({ shelfId, page, hideAdultContent, mediaType }),

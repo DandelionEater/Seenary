@@ -79,6 +79,7 @@ async function main() {
     characters: { edges: [] }, relations: { edges: [] }, recommendations: { nodes: [{ mediaRecommendation: { id: 2 } }] } };
   const provider = {
     async details() { calls++; if (offline) throw Object.assign(new Error('Provider disabled'), { status: 429, retryAfter: 900 }); return partial ? { id: 2, title: { romaji: 'Partial title' } } : clone(raw); },
+    async franchiseStartDate(mediaValue) { calls++; assert.equal(mediaValue.id, 1); return { year: 2020, month: 10, day: 3 }; },
     async search() { calls++; if (offline) throw new Error('Provider disabled'); return { anime: [{ id: 1, type: 'ANIME', title: { romaji: 'New name' }, isAdult: false, averageScore: 90 }], manga: [], characters: [], studios: [] }; },
     async discover() { calls++; if (offline) throw new Error('Provider disabled'); return { anime: { trending: [clone(raw)], shelves: [] }, manga: { trending: [], shelves: [] } }; },
     async studio(id) { calls++; if (offline) throw new Error('Provider disabled'); return { studio: { id, name: 'Studio' }, items: [{ media: clone(raw) }], pageInfo: { currentPage: 1, hasNextPage: false } }; },
@@ -96,6 +97,10 @@ async function main() {
   const original = await media.byProvider('ANIME', 'anilist', 1);
   const detailsClock = original.sources.anilist.groups.details.fetchedAt;
   await service.details('ANIME', 1); assert.equal(calls, 1, 'fresh details skip provider');
+  assert.deepEqual(await service.franchiseStartDate(1), { year: 2020, month: 10, day: 3 });
+  const afterFranchiseCall = calls;
+  assert.deepEqual(await service.franchiseStartDate(1), { year: 2020, month: 10, day: 3 });
+  assert.equal(calls, afterFranchiseCall, 'franchise start dates use their dedicated cache');
   clock += 1000;
   await service.query('searchMedia', ['New name', true]);
   const afterCard = await media.byProvider('ANIME', 'anilist', 1);
@@ -172,6 +177,8 @@ async function main() {
     assert.equal((await (await request('getArtistMedia', ['example-artist', 1, true])).json()).items.length, 1);
     const response = await request('getMediaDetails', ['ANIME', 1]);
     assert.equal(response.status, 200); assert.equal((await response.json()).seenaryId, original._id);
+    assert.deepEqual((await (await request('getAnimeFranchiseStartDate', [1])).json()).franchiseStartDate,
+      { year: 2020, month: 10, day: 3 });
     assert(Array.isArray((await (await request('searchMedia', ['English', true])).json()).anime));
     assert((await (await request('getDiscoverShelfAnime', ['seasonal', 2, true, 'ANIME'])).json()).warning);
   } finally { await new Promise(resolve => { server.close(resolve); server.closeIdleConnections(); }); }

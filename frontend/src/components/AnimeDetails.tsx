@@ -654,13 +654,13 @@ export default function MediaDetails({
                         tone="season"
                       />
                     )}
-                    {!isManga && anime.episodes && (
+                    {!isManga && Number(anime.episodes) > 0 && (
                       <HeroBadge value={`${anime.episodes} episodes`} tone="episodes" />
                     )}
-                    {isManga && anime.chapters && (
+                    {isManga && Number(anime.chapters) > 0 && (
                       <HeroBadge value={`${anime.chapters} chapters`} tone="episodes" />
                     )}
-                    {isManga && anime.volumes && (
+                    {isManga && Number(anime.volumes) > 0 && (
                       <HeroBadge value={`${anime.volumes} volumes`} tone="season" />
                     )}
                   </div>
