@@ -2001,7 +2001,7 @@ export function HomePage({
           discoverOverviewScrollTop.current = scrollTop;
         }
       }}
-      className="scroll-container h-full overflow-y-auto px-6 py-24 text-white"
+      className={`scroll-container h-full overflow-y-auto px-6 pt-24 text-white ${activeHomeTab === "personal" ? "pb-8" : "pb-24"}`}
     >
       <div className="mx-auto max-w-6xl space-y-10">
         <section className="flex flex-col gap-5 border-b border-white/10 pb-6 md:flex-row md:items-end md:justify-between">
@@ -2828,6 +2828,7 @@ function PersonalGridDashboard({
   const gridRef = useRef<HTMLDivElement | null>(null);
   const autoHeightWidgetRefs = useRef(new Map<PersonalGridWidgetId, HTMLDivElement>());
   const [automaticRows, setAutomaticRows] = useState<Partial<Record<PersonalGridWidgetId, number>>>({});
+  const [automaticTrailingSlack, setAutomaticTrailingSlack] = useState(0);
   const resizeSessionRef = useRef<{
     widgetId: PersonalGridWidgetId;
     pointerId: number;
@@ -2850,6 +2851,7 @@ function PersonalGridDashboard({
   useLayoutEffect(() => {
     if (isEditing || typeof ResizeObserver === "undefined") {
       setAutomaticRows({});
+      setAutomaticTrailingSlack(0);
       return;
     }
 
@@ -2862,7 +2864,9 @@ function PersonalGridDashboard({
       const rowHeight = Number.parseFloat(styles.gridAutoRows) || 60;
       const rowGap = Number.parseFloat(styles.rowGap) || 0;
       const rows = Math.max(1, Math.ceil((content.scrollHeight + rowGap) / (rowHeight + rowGap)));
+      const allocatedHeight = rows * rowHeight + Math.max(0, rows - 1) * rowGap;
       setAutomaticRows((current) => current.sinceLiked === rows ? current : { ...current, sinceLiked: rows });
+      setAutomaticTrailingSlack(Math.max(0, allocatedHeight - content.scrollHeight));
     };
     const observer = new ResizeObserver(updateRows);
     observer.observe(content);
@@ -2960,7 +2964,12 @@ function PersonalGridDashboard({
           ? "rounded-[2rem] border border-white/10 bg-white/[0.015] p-3 shadow-inner"
           : ""
       }`}
-      style={gridStyle}
+      style={{
+        ...gridStyle,
+        ...(!isEditing && layout.at(-1)?.id === "sinceLiked" && automaticTrailingSlack
+          ? { marginBottom: -automaticTrailingSlack }
+          : {}),
+      }}
     >
       {layout.map((item, index) => {
         const selected = selectedWidget === item.id;
