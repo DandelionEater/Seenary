@@ -2523,11 +2523,11 @@ function RelationsModal({
     <ModalShell
       onClose={onClose}
       ariaLabel="All related titles"
-      panelClassName="max-h-[min(48rem,calc(100vh-5rem))] max-w-4xl overflow-hidden p-0 text-white"
+      panelClassName="flex h-[min(48rem,calc(100vh-5rem))] max-w-4xl flex-col overflow-hidden p-0 text-white"
       zClassName="z-60"
       showCloseButton
     >
-      <div className="border-b border-white/8 px-6 py-5 pr-20">
+      <div className="shrink-0 border-b border-white/8 px-6 py-5 pr-20">
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-(--app-accent)/25 bg-(--app-accent-soft) text-white/75">
             <LinkIcon className="h-5 w-5" />
@@ -2543,7 +2543,7 @@ function RelationsModal({
           {edges.length} direct {edges.length === 1 ? "connection" : "connections"}, ordered by relationship.
         </p>
       </div>
-      <div className="max-h-[calc(100vh-14rem)] overflow-y-auto p-6">
+      <div className="scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 pr-4 [scrollbar-gutter:stable]">
         <RelatedAnimeShelf
           edges={edges}
           onSelectMedia={onSelectMedia}
