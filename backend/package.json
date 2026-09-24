@@ -1,6 +1,6 @@
 {
   "name": "seenary",
-  "version": "0.2.1-beta",
+  "version": "0.2.2-beta",
   "description": "Anime and media tracking desktop app.",
   "desktopName": "seenary",
   "main": "main.js",
