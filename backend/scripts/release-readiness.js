@@ -203,6 +203,20 @@ function checkReleaseContract() {
   if (missingFiles.length) fail('Desktop packaging inputs', `missing: ${missingFiles.join(', ')}`);
   else pass('Desktop packaging inputs', `${configuredFiles.length} configured files found`);
 
+  const desktopMainSource = fs.readFileSync(path.join(backendDir, 'desktop-main.js'), 'utf8');
+  const electronImport = desktopMainSource.match(
+    /const\s*\{([^}]+)\}\s*=\s*require\(['"]electron['"]\)/
+  );
+  const importsIpcMain = electronImport?.[1]
+    .split(',')
+    .map((name) => name.trim())
+    .includes('ipcMain');
+  if (desktopMainSource.includes('ipcMain.') && !importsIpcMain) {
+    fail('Desktop IPC bootstrap', 'desktop-main.js uses ipcMain without importing it from Electron');
+  } else {
+    pass('Desktop IPC bootstrap', 'Electron IPC dependency is available at startup');
+  }
+
   const updateProvider = build.publish?.[0];
   if (
     updateProvider?.provider === 'github' &&

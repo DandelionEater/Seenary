@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const { setupBundledFrontend } = require('./bundledFrontend');
 const { setupTray } = require('./tray');
