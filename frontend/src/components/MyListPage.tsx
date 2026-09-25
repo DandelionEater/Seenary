@@ -1983,8 +1983,12 @@ function compareEntries(
   }
 
   if (sortMode === "personalScore") {
-    const aScore = typeof a.score === "number" ? a.score : null;
-    const bScore = typeof b.score === "number" ? b.score : null;
+    // Zero is the empty end of the 0–10 control, not a personal rating.
+    // Imports created before score normalization can still contain numeric 0,
+    // while newly edited unrated entries use null. Sort both representations
+    // together so unrated titles consistently fall back to alphabetical order.
+    const aScore = typeof a.score === "number" && a.score > 0 ? a.score : null;
+    const bScore = typeof b.score === "number" && b.score > 0 ? b.score : null;
 
     if (aScore !== null && bScore !== null && bScore !== aScore) {
       return bScore - aScore;

@@ -65,8 +65,9 @@ function createProviderDelivery({ repo, worker, cipher, adapters, now = () => Da
     const entry = context.entry;
     if (context.job.provider === 'anilist') return { mediaId: context.providerMediaId, mediaType: entry.type,
       userId: Number(context.link.providerUserId), status: STATUS[entry.status], progress: entry.progress,
-      progressVolumes: entry.volumeProgress, score: entry.score, notes: entry.notes, startedAt: entry.startedAt,
-      completedAt: entry.completedAt, repeat: entry.repeatCount };
+      progressVolumes: entry.volumeProgress, score: entry.score, notes: entry.notes ?? '',
+      startedAt: entry.startedAt ?? { year: 0, month: 0, day: 0 },
+      completedAt: entry.completedAt ?? { year: 0, month: 0, day: 0 }, repeat: entry.repeatCount };
     return { mediaType: entry.type, status: entry.status, progress: entry.progress, volumeProgress: entry.volumeProgress,
       score: entry.score, notes: entry.notes, started_at: entry.startedAt,
       completed_at: entry.completedAt, repeat_count: entry.repeatCount,

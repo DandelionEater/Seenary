@@ -66,6 +66,20 @@ async function verify(repo) {
   assert(!JSON.stringify(await repo.jobs.findOne({ _id: 'job-al-success' })).includes('private note'));
 
   clock.value += 1;
+  const clearFixture = await seed(repo, 'al-clear-fields', 'anilist');
+  await repo.libraryEntries.updateOne(
+    { userId: clearFixture.userId, mediaId: clearFixture.mediaId },
+    { $set: { notes: null, startedAt: null, completedAt: null } },
+  );
+  owned = await claim(repo, clock);
+  delivery = createProviderDelivery({ repo, worker: owned.worker, cipher, adapters, now: () => clock.value, spacing: { anilist: 0, mal: 0 } });
+  assert.equal((await delivery.deliver(owned.item)).status, 'succeeded');
+  const cleared = calls.at(-1).data;
+  assert.equal(cleared.notes, '', 'AniList needs an explicit empty string to clear notes');
+  assert.deepEqual(cleared.startedAt, { year: 0, month: 0, day: 0 }, 'AniList needs an explicit zero date to clear startedAt');
+  assert.deepEqual(cleared.completedAt, { year: 0, month: 0, day: 0 }, 'AniList needs an explicit zero date to clear completedAt');
+
+  clock.value += 1;
   const malFixture = await seed(repo, 'mal-refresh', 'mal', { type: 'MANGA', expiresAt: clock.value + 1000 });
   owned = await claim(repo, clock);
   delivery = createProviderDelivery({ repo, worker: owned.worker, cipher, adapters, now: () => clock.value, spacing: { anilist: 0, mal: 0 } });
