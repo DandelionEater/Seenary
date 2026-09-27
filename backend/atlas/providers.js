@@ -261,6 +261,8 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
         lastSuccessAt: state.lastSuccessAt || null,
         lastOutcome: state.lastOutcome || null,
         lastErrorCode: /^[A-Z][A-Z0-9_]{0,63}$/.test(state.lastErrorCode || '') ? state.lastErrorCode : null,
+        lastErrorStatus: Number.isInteger(state.lastErrorStatus) && state.lastErrorStatus >= 400 && state.lastErrorStatus <= 599 ? state.lastErrorStatus : null,
+        lastErrorPhase: ['authorization', 'fetch-anime', 'fetch-manga', 'normalize-anime', 'normalize-manga', 'hydrate', 'mapping', 'reconcile', 'finish'].includes(state.lastErrorPhase) ? state.lastErrorPhase : null,
         nextAttemptAt: state.nextAttemptAt || null,
         attempts: state.attempts || 0,
         counts: state.lastCounts || null,
