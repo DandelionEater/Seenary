@@ -238,6 +238,17 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
       const requestedAt = new Date();
       const pending = await repo.providerRefreshStates.findOne({ _id: link._id });
       const isFirstSync = !pending?.lastSuccessAt;
+      const active = pending?.leaseUntil && new Date(pending.leaseUntil) > requestedAt;
+      const lastManualRetry = pending?.lastManualRetryAt && new Date(pending.lastManualRetryAt).getTime();
+      if (pending?.manualRequestedAt && pending.lastOutcome === 'retry' && !active
+          && pending.lastErrorStatus !== 429 && (!lastManualRetry || requestedAt.getTime() - lastManualRetry >= 60000)) {
+        // A failed manual pull stays queued during backoff. Allow an explicit,
+        // throttled retry without taking a live worker's lease or resetting history.
+        const retried = await repo.providerRefreshStates.updateOne({ _id: link._id, revision: pending.revision,
+          lastOutcome: 'retry', $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lte: requestedAt } }] },
+        { $set: { nextAttemptAt: requestedAt, lastManualRetryAt: requestedAt }, $inc: { revision: 1 } });
+        if (retried.modifiedCount) return { ok: true, requestedAt: pending.manualRequestedAt, retryQueued: true, isFirstSync };
+      }
       if (pending?.manualRequestedAt || pending?.leaseUntil && new Date(pending.leaseUntil) > requestedAt) {
         return { ok: true, requestedAt: pending.manualRequestedAt || requestedAt, alreadyQueued: true, isFirstSync };
       }

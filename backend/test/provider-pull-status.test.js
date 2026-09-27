@@ -84,3 +84,37 @@ for (const status of [401, 429, 503, undefined]) {
     assert.equal(JSON.stringify(recorded).includes('private'), false);
   });
 }
+
+test('explicit pull requeues an idle failed manual job without losing its history', async () => {
+  const original = new Date(Date.now() - 3600000);
+  const state = { _id: 'link', revision: 4, manualRequestedAt: original, lastOutcome: 'retry', attempts: 144,
+    nextAttemptAt: new Date(Date.now() + 3600000) };
+  let update;
+  const service = createProviderService({
+    accounts: { getAuthenticatedUser: async () => ({ _id: 'alice' }) },
+    repo: { providerAccounts: { findOne: async () => ({ _id: 'link' }) },
+      providerRefreshStates: { findOne: async () => state, updateOne: async (query, value) => {
+        update = { query, value }; Object.assign(state, value.$set); return { modifiedCount: 1 };
+      } } },
+  });
+  const reply = await service.requestInboundSync('alice', 'anilist');
+  assert.equal(reply.retryQueued, true);
+  assert.equal(reply.requestedAt, original);
+  assert.equal(update.query.revision, 4);
+  assert.ok(update.query.$or);
+  assert.ok(state.nextAttemptAt.getTime() <= Date.now());
+  assert.equal(state.attempts, 144);
+  assert.equal((await service.requestInboundSync('alice', 'anilist')).alreadyQueued, true, 'repeated clicks are throttled');
+});
+
+test('explicit retry preserves active leases and provider rate-limit backoff', async () => {
+  for (const fields of [{ leaseUntil: new Date(Date.now() + 60000) }, { lastErrorStatus: 429 }]) {
+    const state = { revision: 1, manualRequestedAt: new Date(), lastOutcome: 'retry', ...fields };
+    const service = createProviderService({
+      accounts: { getAuthenticatedUser: async () => ({ _id: 'alice' }) },
+      repo: { providerAccounts: { findOne: async () => ({ _id: 'link' }) },
+        providerRefreshStates: { findOne: async () => state, updateOne: async () => assert.fail('must preserve backoff or active lease') } },
+    });
+    assert.equal((await service.requestInboundSync('alice', 'anilist')).alreadyQueued, true);
+  }
+});
