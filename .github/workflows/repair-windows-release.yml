@@ -1,0 +1,65 @@
+name: Repair published Windows installer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-windows-release
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+      - name: Verify explicitly authorized repair version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseVersion = node -p "require('./backend/package.json').version"
+          if ($releaseVersion -ne '0.2.4-beta') { throw 'This repair is authorized only for 0.2.4-beta.' }
+          gh release view "v$releaseVersion" --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw 'The published release does not exist.' }
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+      - name: Install desktop dependencies
+        run: npm ci
+        working-directory: backend
+      - name: Rebuild native modules for Electron
+        run: npm run rebuild:electron
+        working-directory: backend
+      - name: Check repaired release
+        run: npm run release:check -- --target 0.2.4-beta
+        working-directory: backend
+      - name: Build replacement installer
+        run: npm run dist
+        working-directory: backend
+      - name: Verify installer metadata and packaged startup
+        run: |
+          npm run release:artifacts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/check-packaged-startup.js
+        working-directory: backend
+      - name: Replace installer and blockmap, then publish matching update metadata
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v0.2.4-beta release/0.2.4-beta/Seenary-Setup-0.2.4-beta.exe release/0.2.4-beta/Seenary-Setup-0.2.4-beta.exe.blockmap --repo "$env:GITHUB_REPOSITORY" --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Installer replacement failed; update metadata was not replaced.' }
+          gh release upload v0.2.4-beta release/0.2.4-beta/latest.yml --repo "$env:GITHUB_REPOSITORY" --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Update metadata replacement failed.' }
+          gh release edit v0.2.4-beta --repo "$env:GITHUB_REPOSITORY" --notes-file release-notes-0.2.4-beta.md

@@ -1,5 +1,5 @@
 import { exportDiagnostics } from '../utils/diagnostics';
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ComponentType, type ReactNode, type SVGProps } from "react";
 import {
   ArrowTopRightOnSquareIcon,
   ArrowPathIcon,
@@ -14,6 +14,7 @@ import {
   CloudArrowDownIcon,
   CloudIcon,
   ClipboardDocumentIcon,
+  CommandLineIcon,
   DocumentTextIcon,
   ExclamationTriangleIcon,
   EyeSlashIcon,
@@ -38,6 +39,7 @@ import {
   selectBackupSections,
   type BackupInspection,
 } from "../utils/portablePreferences";
+import { Tooltip } from "./ui/Tooltip";
 import { ModalShell } from "./ui/ModalShell";
 
 export type ThemeAccent = "violet" | "rose" | "amber" | "emerald" | "custom";
@@ -292,6 +294,14 @@ type SettingsPageProps = {
 
 type SettingsSectionId = "appearance" | "home" | "content" | "account" | "sync" | "data" | "general";
 type SyncActivityTab = "pending" | "completed" | "failed" | "pulled" | "excluded";
+type DesktopShortcutState = {
+  available: boolean;
+  loading: boolean;
+  enabled: boolean;
+  accelerator: string;
+  draftAccelerator: string;
+  feedback: { kind: "success" | "error"; message: string } | null;
+};
 type DesktopStartupState = {
   available: boolean;
   loading: boolean;
@@ -587,6 +597,16 @@ function getImportGroupKey(group: ImportPreviewGroup) {
 }
 
 
+const SHORTCUT_PRESETS = [
+  "Control+Space",
+  "Control+Shift+Space",
+  "Alt+Space",
+  "Control+Alt+Space",
+  "Control+Alt+Shift+Space",
+  "Control+Shift+Enter",
+  "Alt+Shift+Space",
+];
+
 const APP_VERSION = __APP_VERSION__;
 const GITHUB_ISSUES_URL = "https://github.com/DandelionEater/Seenary/issues";
 const GITHUB_RELEASES_API =
@@ -798,6 +818,15 @@ export function SettingsPage({
   const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(null);
   const [isSyncActivityOpen, setIsSyncActivityOpen] = useState(false);
   const [syncActivityTab, setSyncActivityTab] = useState<SyncActivityTab>("pending");
+  const [desktopShortcut, setDesktopShortcut] = useState<DesktopShortcutState>({
+    available: Boolean(window.desktopShortcuts),
+    loading: Boolean(window.desktopShortcuts),
+    enabled: true,
+    accelerator: "Control+Space",
+    draftAccelerator: "Control+Space",
+    feedback: null,
+  });
+  const [isShortcutRecorderFocused, setIsShortcutRecorderFocused] = useState(false);
   const [desktopStartup, setDesktopStartup] = useState<DesktopStartupState>({
     available: Boolean(window.desktopStartup),
     loading: Boolean(window.desktopStartup),
@@ -839,6 +868,7 @@ export function SettingsPage({
 
   useEffect(() => {
     return () => {
+      void window.desktopShortcuts?.setShortcutRecordingActive(false);
       if (bugReportCopyResetRef.current !== null) {
         window.clearTimeout(bugReportCopyResetRef.current);
       }
@@ -1013,6 +1043,7 @@ export function SettingsPage({
 
   useEffect(() => {
     loadDesktopStartup();
+    loadDesktopShortcut();
   }, []);
 
   useEffect(() => {
@@ -1436,6 +1467,142 @@ export function SettingsPage({
 
 
 
+
+  async function loadDesktopShortcut() {
+    if (!window.desktopShortcuts) {
+      return;
+    }
+
+    try {
+      const result = await window.desktopShortcuts.getHideShowShortcut();
+
+      setDesktopShortcut((current) => ({
+        ...current,
+        available: true,
+        loading: false,
+        enabled: result.enabled,
+        accelerator: result.accelerator,
+        draftAccelerator: result.accelerator,
+        feedback: result.ok
+          ? current.feedback
+          : { kind: "error", message: result.message || "Failed to load shortcut setting." },
+      }));
+    } catch {
+      setDesktopShortcut((current) => ({
+        ...current,
+        available: true,
+        loading: false,
+        feedback: { kind: "error", message: "Failed to load shortcut setting." },
+      }));
+    }
+  }
+
+  async function saveDesktopShortcut(next: {
+    enabled?: boolean;
+    accelerator?: string;
+  }) {
+    if (!window.desktopShortcuts || desktopShortcut.loading) {
+      return;
+    }
+
+    const enabled = next.enabled ?? desktopShortcut.enabled;
+    const accelerator = (next.accelerator ?? desktopShortcut.draftAccelerator).trim();
+
+    if (enabled && !hasAcceleratorActionKey(accelerator)) {
+      setDesktopShortcut((current) => ({
+        ...current,
+        feedback: {
+          kind: "error",
+          message: "Add a letter, number, or key after the modifiers, such as Control+Shift+Alt+Space.",
+        },
+      }));
+      return;
+    }
+
+    setDesktopShortcut((current) => ({ ...current, loading: true }));
+
+    try {
+      // Finish shortcut capture before saving. Awaiting this IPC prevents the
+      // recorder's unregister operation from racing the new registration.
+      setIsShortcutRecorderFocused(false);
+      await window.desktopShortcuts.setShortcutRecordingActive(false);
+
+      const result = await window.desktopShortcuts.setHideShowShortcut({
+        enabled,
+        accelerator,
+      });
+
+      setDesktopShortcut((current) => ({
+        ...current,
+        loading: false,
+        enabled: result.enabled,
+        accelerator: result.accelerator,
+        draftAccelerator: result.accelerator || accelerator,
+        feedback: {
+          kind: result.ok ? "success" : "error",
+          message: result.message || (result.ok ? "Shortcut updated." : "Failed to update shortcut."),
+        },
+      }));
+    } catch {
+      setDesktopShortcut((current) => ({
+        ...current,
+        loading: false,
+        feedback: { kind: "error", message: "Failed to update shortcut." },
+      }));
+    }
+  }
+
+  function updateDraftShortcut(accelerator: string) {
+    setDesktopShortcut((current) => ({
+      ...current,
+      draftAccelerator: accelerator,
+      feedback: null,
+    }));
+  }
+
+  function setShortcutRecorderFocused(focused: boolean) {
+    setIsShortcutRecorderFocused(focused);
+    void window.desktopShortcuts?.setShortcutRecordingActive(focused);
+  }
+
+  function appendDraftShortcutToken(token: string) {
+    setDesktopShortcut((current) => ({
+      ...current,
+      draftAccelerator: appendAcceleratorToken(current.draftAccelerator, token),
+      feedback: null,
+    }));
+  }
+
+  function handleShortcutKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (!desktopShortcut.enabled || desktopShortcut.loading) {
+      return;
+    }
+
+    if (event.key === "Backspace" || event.key === "Delete") {
+      event.preventDefault();
+      updateDraftShortcut(removeLastAcceleratorToken(desktopShortcut.draftAccelerator));
+      return;
+    }
+
+    const token = keyEventToAcceleratorToken(event);
+
+    if (!token) {
+      return;
+    }
+
+    event.preventDefault();
+    appendDraftShortcutToken(token);
+  }
+
+  function handleShortcutPreset(accelerator: string) {
+    setDesktopShortcut((current) => ({
+      ...current,
+      enabled: true,
+      draftAccelerator: accelerator,
+      feedback: null,
+    }));
+    void saveDesktopShortcut({ enabled: true, accelerator });
+  }
 
   async function loadSyncStatus() {
     try {
@@ -2339,7 +2506,7 @@ export function SettingsPage({
       });
       if (result.ok) {
         if (backupPreview.restoreDesktopPreferences) {
-          await Promise.all([loadDesktopWindow(), loadDesktopStartup()]);
+          await Promise.all([loadDesktopWindow(), loadDesktopStartup(), loadDesktopShortcut()]);
         }
         setBackupPreview(null);
       }
@@ -2434,6 +2601,15 @@ export function SettingsPage({
                 ...(window.desktopStartup && desktopStartup.available
                   ? [desktopStartup.openAtLogin ? "Launches at login" : "Manual launch"]
                   : []),
+                ...(desktopShortcut.available
+                  ? [
+                      desktopShortcut.loading
+                        ? "Shortcut loading..."
+                        : desktopShortcut.enabled && desktopShortcut.accelerator
+                          ? `Shortcut ${desktopShortcut.accelerator}`
+                          : "Shortcut disabled",
+                    ]
+                  : []),
                 "Welcome replay",
               ]}
               open={openSection === "general"}
@@ -2450,7 +2626,138 @@ export function SettingsPage({
                   description="Quick app information for this install."
                 />
 
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {desktopShortcut.available && (
+                <div>
+                  <SectionHeading
+                    icon={CommandLineIcon}
+                    title="Desktop shortcut"
+                    description={
+                      desktopEnvironment.shortcutMethod === "unavailable"
+                        ? "Global hide/show shortcuts are unavailable on Wayland in this release."
+                        : "Choose the global shortcut that hides or shows the desktop app."
+                    }
+                  />
+
+                  <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="font-semibold text-white">Hide/show Seenary</p>
+                        <p className="mt-2 max-w-2xl text-sm leading-6 text-white/45">
+                          Use Electron accelerator format, such as Control+Shift+Space or Alt+Space.
+                          {desktopEnvironment.shortcutMethod === "unavailable"
+                            ? " This remains available when Seenary runs through X11."
+                            : " Turn it off if the shortcut conflicts with another app."}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={
+                          desktopShortcut.loading ||
+                          desktopEnvironment.shortcutMethod === "unavailable"
+                        }
+                        onClick={() => saveDesktopShortcut({ enabled: !desktopShortcut.enabled })}
+                        className={`rounded-2xl px-4 py-2.5 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-white/55 ${
+                          desktopShortcut.enabled
+                            ? "border border-white/10 bg-white/[0.04] text-white/75 hover:bg-white/8"
+                            : "border border-white/10 bg-white text-black hover:opacity-90"
+                        } disabled:cursor-not-allowed disabled:opacity-50`}
+                      >
+                        {desktopShortcut.enabled ? "Disable shortcut" : "Enable shortcut"}
+                      </button>
+                    </div>
+
+                    <div className="mt-5 flex flex-col gap-3 md:flex-row">
+                      <div className="relative min-w-0 flex-1">
+                        <input
+                          value={desktopShortcut.draftAccelerator}
+                          disabled={
+                            !desktopShortcut.enabled ||
+                            desktopShortcut.loading ||
+                            desktopEnvironment.shortcutMethod === "unavailable"
+                          }
+                          onFocus={() => setShortcutRecorderFocused(true)}
+                          onBlur={() => setShortcutRecorderFocused(false)}
+                          onKeyDown={handleShortcutKeyDown}
+                          onChange={(event) => updateDraftShortcut(normalizeAcceleratorInput(event.target.value))}
+                          className={`min-w-0 w-full rounded-2xl border bg-black/20 px-4 py-3 pr-12 text-sm text-white outline-none placeholder:text-white/30 disabled:cursor-not-allowed disabled:opacity-50 ${
+                            isShortcutRecorderFocused
+                              ? "border-white/25"
+                              : "border-white/10"
+                          }`}
+                          placeholder="Press a shortcut combination"
+                          aria-label="Hide/show shortcut"
+                        />
+                        {desktopShortcut.draftAccelerator && (
+                          <Tooltip content="Clear shortcut" className="absolute right-2 top-1/2 h-8 w-8 -translate-y-1/2" positioned>
+                          <button
+                            type="button"
+                            disabled={
+                              !desktopShortcut.enabled ||
+                              desktopShortcut.loading ||
+                              desktopEnvironment.shortcutMethod === "unavailable"
+                            }
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => updateDraftShortcut("")}
+                            className="flex h-full w-full items-center justify-center rounded-full text-white/45 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                            aria-label="Clear shortcut"
+                          >
+                            <XMarkIcon className="h-4 w-4" />
+                          </button>
+                          </Tooltip>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={
+                          !desktopShortcut.enabled ||
+                          desktopShortcut.loading ||
+                          desktopEnvironment.shortcutMethod === "unavailable"
+                        }
+                        onClick={() => saveDesktopShortcut({ enabled: true })}
+                        className="rounded-2xl border border-white/10 bg-white px-5 py-3 text-sm font-semibold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Save shortcut
+                      </button>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap justify-center gap-2">
+                      {SHORTCUT_PRESETS.map((accelerator) => (
+                        <button
+                          key={accelerator}
+                          type="button"
+                          disabled={
+                            desktopShortcut.loading ||
+                            desktopEnvironment.shortcutMethod === "unavailable"
+                          }
+                          onClick={() => handleShortcutPreset(accelerator)}
+                          className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                            normalizeAcceleratorInput(desktopShortcut.draftAccelerator) === accelerator
+                              ? "border-white/25 bg-white/12 text-white"
+                              : "border-white/10 bg-white/[0.04] text-white/55 hover:bg-white/8 hover:text-white"
+                          } disabled:cursor-not-allowed disabled:opacity-50`}
+                        >
+                          {accelerator}
+                        </button>
+                      ))}
+                    </div>
+
+                    {desktopShortcut.feedback && (
+                      <p
+                        className={`mt-4 rounded-2xl border px-3 py-2 text-sm ${
+                          desktopShortcut.feedback.kind === "success"
+                            ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-100"
+                            : "border-rose-400/20 bg-rose-400/10 text-rose-100"
+                        }`}
+                      >
+                        {desktopShortcut.feedback.message}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <InfoCard label="Version" value={APP_VERSION} />
                   <InfoCard label="Profile" value={username} />
                   {desktopEnvironment.platform && (
@@ -6547,6 +6854,122 @@ function getWindowPresetId(value: unknown): WindowPresetId {
 
 
 
+
+function normalizeAcceleratorInput(value: string) {
+  return value
+    .split("+")
+    .map((part) => normalizeAcceleratorToken(part))
+    .filter(Boolean)
+    .join("+");
+}
+
+function appendAcceleratorToken(accelerator: string, token: string) {
+  const normalizedToken = normalizeAcceleratorToken(token);
+
+  if (!normalizedToken) {
+    return normalizeAcceleratorInput(accelerator);
+  }
+
+  const tokens = normalizeAcceleratorInput(accelerator)
+    .split("+")
+    .filter(Boolean);
+
+  if (!tokens.includes(normalizedToken)) {
+    tokens.push(normalizedToken);
+  }
+
+  return tokens.join("+");
+}
+
+function removeLastAcceleratorToken(accelerator: string) {
+  const tokens = normalizeAcceleratorInput(accelerator)
+    .split("+")
+    .filter(Boolean);
+
+  tokens.pop();
+
+  return tokens.join("+");
+}
+
+function keyEventToAcceleratorToken(event: ReactKeyboardEvent<HTMLInputElement>) {
+  if (event.repeat) {
+    return null;
+  }
+
+  return normalizeAcceleratorToken(event.key);
+}
+
+function normalizeAcceleratorToken(value: string) {
+  if (value === " ") {
+    return "Space";
+  }
+
+  const token = value.trim();
+
+  if (!token) {
+    return "";
+  }
+
+  const lowerToken = token.toLowerCase();
+
+  if (lowerToken === "control" || lowerToken === "ctrl") {
+    return "Control";
+  }
+
+  if (lowerToken === "alt" || lowerToken === "option") {
+    return "Alt";
+  }
+
+  if (lowerToken === "shift") {
+    return "Shift";
+  }
+
+  if (lowerToken === "meta" || lowerToken === "command" || lowerToken === "cmd") {
+    return "Meta";
+  }
+
+  if (lowerToken === " " || lowerToken === "space" || lowerToken === "spacebar") {
+    return "Space";
+  }
+
+  if (lowerToken === "escape" || lowerToken === "esc") {
+    return "Escape";
+  }
+
+  if (lowerToken === "arrowup") {
+    return "Up";
+  }
+
+  if (lowerToken === "arrowdown") {
+    return "Down";
+  }
+
+  if (lowerToken === "arrowleft") {
+    return "Left";
+  }
+
+  if (lowerToken === "arrowright") {
+    return "Right";
+  }
+
+  if (/^f([1-9]|1[0-9]|2[0-4])$/.test(lowerToken)) {
+    return lowerToken.toUpperCase();
+  }
+
+  if (/^[a-z0-9]$/.test(lowerToken)) {
+    return lowerToken.toUpperCase();
+  }
+
+  return token.charAt(0).toUpperCase() + token.slice(1);
+}
+
+function hasAcceleratorActionKey(accelerator: string) {
+  const modifierTokens = new Set(["Control", "Alt", "Shift", "Meta"]);
+
+  return normalizeAcceleratorInput(accelerator)
+    .split("+")
+    .some((token) => token && !modifierTokens.has(token));
+}
 
 function getSyncActivityTabLabel(tab: SyncActivityTab) {
   return tab === "pending" ? "Queued" : capitalize(tab);

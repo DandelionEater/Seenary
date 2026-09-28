@@ -29,7 +29,7 @@ let server, finished = false;
 function finish(error) {
   if (finished) return; finished=true;
   if (error) console.error(error);
-  else console.log('PASS: packaged desktop main boots, packaged preload initializes, diagnostics IPC responds, and removed shortcuts remain disabled.');
+  else console.log('PASS: packaged desktop main boots, packaged preload initializes, diagnostics IPC responds, and native show/hide shortcut settings are available.');
   server?.close(); app.exit(error ? 1 : 0);
 }
 process.on('uncaughtException',finish);
@@ -43,7 +43,8 @@ app.on('browser-window-created', (_event, win) => {
       const report=await win.webContents.executeJavaScript('window.desktopDiagnostics.getInfo()');
       assert.equal(report.packaged,true); assert.equal(report.profileWritable,true);
       const shortcut=await win.webContents.executeJavaScript('window.desktopShortcuts.getHideShowShortcut()');
-      assert.equal(shortcut.enabled,false);
+      assert.equal(shortcut.enabled,true);
+      assert.equal(shortcut.accelerator,'Control+Space');
       assert.equal(await win.webContents.executeJavaScript('typeof window.desktopLibrary.update'), 'function');
       setTimeout(()=>finish(),500);
     } catch(error) {finish(error);}
