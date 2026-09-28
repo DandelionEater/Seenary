@@ -1,0 +1,16 @@
+name: Repair published Linux packages
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: repair-linux-release
+  cancel-in-progress: false
+jobs:
+      - name: Replace Linux packages and matching checksums
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v0.2.4-beta release/0.2.4-beta/linux/*.AppImage release/0.2.4-beta/linux/*.flatpak release/0.2.4-beta/linux/*.tar.gz --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release upload v0.2.4-beta release/0.2.4-beta/linux/SHA256SUMS --repo "${GITHUB_REPOSITORY}" --clobber

@@ -50,7 +50,7 @@ Tag: `v0.2.4-beta`
 
 - Collapsed descriptions fade the text itself instead of covering it with a solid background gradient, keeping the fade seamless over accent glows.
 
-- Removed custom keyboard actions outside Search, keeping Escape to close artwork, trailers, and modals. Cards, filters, status menus, notifications, and import fields no longer intercept keys. The Windows desktop show/hide shortcut and its settings panel remain available; the legacy DevTools shortcut is removed.
+- Removed custom keyboard actions outside Search, keeping Escape to close artwork, trailers, and modals. Cards, filters, status menus, notifications, and import fields no longer intercept keys. The desktop show/hide shortcut and its settings panel remain available; the legacy DevTools shortcut is removed.
 
 - Provider updates distinguish downloading, waiting to retry, and failure, show the next retry countdown, and offer Retry update. Provider rate-limit backoff remains respected, and waiting jobs continue being monitored instead of failing after an arbitrary timeout.
 
