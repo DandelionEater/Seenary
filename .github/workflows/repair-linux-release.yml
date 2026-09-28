@@ -7,6 +7,66 @@ concurrency:
   group: repair-linux-release
   cancel-in-progress: false
 jobs:
+  build-linux:
+    name: Build Linux packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out release commit
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Verify authorized repair version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(node -p "require('./backend/package.json').version")" = '0.2.4-beta'
+          gh release view v0.2.4-beta --repo "${GITHUB_REPOSITORY}"
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Install desktop dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Install Flatpak build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub \
+            org.freedesktop.Platform//25.08 \
+            org.freedesktop.Sdk//25.08 \
+            org.electronjs.Electron2.BaseApp//25.08
+
+      - name: Build Linux release
+        run: npm run dist:linux
+        working-directory: backend
+
+      - name: Prepare Linux archive and checksums
+        shell: bash
+        run: |
+          version="0.2.4-beta"
+          artifact_dir="release/${version}/linux"
+          archive="${artifact_dir}/Seenary-${version}-linux-unpacked.tar.gz"
+
+          tar -C "${artifact_dir}" -czf "${archive}" linux-unpacked
+          (
+            cd "${artifact_dir}"
+            sha256sum ./*.AppImage ./*.flatpak ./*.tar.gz > SHA256SUMS
+          )
+
       - name: Replace Linux packages and matching checksums
         shell: bash
         env:
