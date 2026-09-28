@@ -115,6 +115,14 @@ jobs:
         run: npm run dist
         working-directory: backend
 
+      - name: Verify Windows installer artifacts
+        run: npm run release:artifacts
+        working-directory: backend
+
+      - name: Verify packaged desktop startup
+        run: node scripts/check-packaged-startup.js
+        working-directory: backend
+
       - name: Upload Windows release bundle
         uses: actions/upload-artifact@v6
         with:

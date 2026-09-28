@@ -170,6 +170,7 @@ function createStagingServer(service, providers = null, media = null, library = 
         case 'getStudioMedia':
         case 'getArtistMedia':
         case 'getCharacterDetails':
+        case 'getMediaPeople':
         case 'getStaffDetails':
         case 'getAnimeThemeMusic':
         case 'getDiscoverMedia': {

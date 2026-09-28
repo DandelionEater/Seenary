@@ -1,3 +1,4 @@
+import { AccentGlows } from "./ui/AccentGlows";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -34,7 +35,9 @@ import { ListEntryModal } from "./ListEntryModal";
 import { ModalShell } from "./ui/ModalShell";
 import { Tooltip } from "./ui/Tooltip";
 import { ThemeMusicSection } from "./ThemeMusicSection";
-import { getPreferredTitle, type TitleLanguage } from "../utils/titlePreference";
+import { WatchOrder } from "./WatchOrder";
+import { FranchiseLibraryControls, FranchiseLibraryProvider } from "./FranchiseLibrary";
+import { getAlternateTitles, getPreferredTitle, type TitleLanguage } from "../utils/titlePreference";
 import { formatLocalDate } from "../utils/dateFormat";
 import { formatEnum, formatNumber, getListStatusLabel } from "../utils/mediaFormatting";
 import { recordRecentMedia } from "../utils/recentMediaHistory";
@@ -133,6 +136,10 @@ export default function MediaDetails({
   hideAdultContent,
 }: AnimeDetailsProps) {
   const [anime, setAnime] = useState<AnimeMedia | null>(null);
+  useEffect(() => {
+    if (!anime || anime.id !== mediaId) return;
+    window.dispatchEvent(new CustomEvent('seenary:title-opened', { detail: { id: mediaId, type: mediaType, title: getPreferredTitle(anime.title, titleLanguage) } }));
+  }, [anime, mediaId, mediaType, titleLanguage]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [franchiseTimingStatus, setFranchiseTimingStatus] = useState<
@@ -140,11 +147,13 @@ export default function MediaDetails({
   >("idle");
   const [listEntry, setListEntry] = useState<ListEntry | null>(null);
   const [listBusy, setListBusy] = useState(false);
+  const [listEntryLoading, setListEntryLoading] = useState(true);
   const [listMessage, setListMessage] = useState<string | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [selectedPerson, setSelectedPerson] = useState<PeopleModalItem | null>(null);
   const [expandedArtwork, setExpandedArtwork] = useState<ExpandedArtwork | null>(null);
   const [isRelationsOpen, setIsRelationsOpen] = useState(false);
+  const [relationsInitialView, setRelationsInitialView] = useState<"relations" | "watch">("relations");
   const [retryKey, setRetryKey] = useState(0);
   const [themeMusic, setThemeMusic] = useState<AnimeThemeMusicItem[]>([]);
   const [themeMusicLoading, setThemeMusicLoading] = useState(false);
@@ -153,18 +162,21 @@ export default function MediaDetails({
     onNotify?.("success", title, message);
   }
 
-  const loadListEntry = useCallback(async (currentAnimeId: number) => {
+  const loadListEntry = useCallback(async (currentAnimeId: number, isCurrent: () => boolean = () => true) => {
+    if (isCurrent()) setListEntryLoading(true);
     try {
       const result =
         mediaType === "MANGA"
           ? await window.api.getMyMangaListEntry(currentAnimeId)
           : await window.api.getMyListEntry(currentAnimeId);
 
-      if (result.ok) {
+      if (result.ok && isCurrent()) {
         setListEntry(result.entry);
       }
     } catch (err) {
       console.error("Failed to load list entry:", err);
+    } finally {
+      if (isCurrent()) setListEntryLoading(false);
     }
   }, [mediaType]);
 
@@ -175,13 +187,15 @@ export default function MediaDetails({
       try {
         setLoading(true);
         setError(null);
+        setListEntry(null);
+        // Personal progress loads alongside public metadata rather than blocking the page.
+        void loadListEntry(mediaId, () => mounted);
 
         const data = await window.api.getMediaDetails(mediaType, mediaId);
 
         if (mounted) {
           setAnime(data);
           recordRecentMedia(userId, mediaType, data);
-          await loadListEntry(mediaId);
         }
       } catch (err) {
         console.error(err);
@@ -282,7 +296,7 @@ export default function MediaDetails({
   }, [anime, mediaId, mediaType]);
 
   async function handleAddToList() {
-    if (listBusy) return;
+    if (listBusy || listEntryLoading) return;
 
     try {
       setListBusy(true);
@@ -328,7 +342,7 @@ export default function MediaDetails({
   }
 
   async function handleQuickProgress() {
-    if (listBusy) return;
+    if (listBusy || listEntryLoading) return;
 
     try {
       setListBusy(true);
@@ -412,7 +426,7 @@ export default function MediaDetails({
   }
 
   async function handleToggleFavorite() {
-    if (listBusy) return;
+    if (listBusy || listEntryLoading) return;
 
     try {
       setListBusy(true);
@@ -550,8 +564,8 @@ export default function MediaDetails({
     .sort((a, b) => (b.rank ?? 0) - (a.rank ?? 0))
     .slice(0, 12);
 
-  const characterEdges = anime.characters?.edges?.slice(0, 12) ?? [];
-  const staffEdges = anime.staff?.edges?.slice(0, 12) ?? [];
+  const characterEdges = anime.characters?.edges ?? [];
+  const staffEdges = anime.staff?.edges ?? [];
   const relationEdges: RelatedAnimeEdge[] = anime.relations?.edges ?? [];
   const recommendations = anime.recommendations?.nodes ?? [];
   const externalLinks = (anime.externalLinks ?? []).filter((link) => !link.isDisabled);
@@ -572,8 +586,10 @@ export default function MediaDetails({
 
   return (
     <>
-      <div className="relative h-full overflow-hidden rounded-3xl bg-[#0f0f0f] text-white">
-        <div data-global-scroll-root className="scroll-container h-full overflow-y-auto">
+      <div className="relative isolate h-full overflow-hidden rounded-3xl bg-[#0f0f0f] text-white">
+        <div data-global-scroll-root className="scroll-container relative h-full overflow-y-auto">
+          <div className="relative isolate min-h-full overflow-hidden">
+            <AccentGlows seed={`${mediaType}:${mediaId}`} />
           {anime.warning && <p role="status" className="mx-5 mt-4 rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">{anime.warning}</p>}
           <div className="relative h-56 w-full overflow-hidden rounded-t-3xl">
             {anime.bannerImage ? (
@@ -676,6 +692,16 @@ export default function MediaDetails({
                     synonyms={anime.synonyms ?? []}
                   />
 
+                  {!isManga && relationEdges.some(edge => edge.node?.type === "ANIME") && (
+                    <div className="mt-4 flex w-full">
+                    <button type="button" onClick={() => { setRelationsInitialView("watch"); setIsRelationsOpen(true); }}
+                      className="inline-flex items-center gap-2 rounded-full border border-(--app-accent)/25 bg-(--app-accent-soft) px-4 py-2 text-sm font-medium text-white/80 transition hover:border-(--app-accent)/50 hover:text-white focus-visible:outline-2 focus-visible:outline-(--app-accent)">
+                      <PlayCircleIcon className="h-4 w-4 text-(--app-accent)" /> Suggested watch order
+                      <ArrowRightIcon className="h-3.5 w-3.5 text-white/40" />
+                    </button>
+                    </div>
+                  )}
+
                   {isManga ? (
                     <MangaOverview
                       chapters={anime.chapters ?? null}
@@ -684,7 +710,7 @@ export default function MediaDetails({
                       startDate={anime.startDate ?? null}
                       relations={relationEdges}
                       entry={listEntry}
-                      onOpenRelations={() => setIsRelationsOpen(true)}
+                      onOpenRelations={() => { setRelationsInitialView("relations"); setIsRelationsOpen(true); }}
                     />
                   ) : (
                     <WatchOverview
@@ -696,7 +722,7 @@ export default function MediaDetails({
                       nextAiringEpisode={anime.nextAiringEpisode ?? null}
                       entry={listEntry}
                       relations={relationEdges}
-                      onOpenRelations={() => setIsRelationsOpen(true)}
+                      onOpenRelations={() => { setRelationsInitialView("relations"); setIsRelationsOpen(true); }}
                     />
                   )}
 
@@ -773,7 +799,7 @@ export default function MediaDetails({
                   mediaType={mediaType}
                   onAdd={handleAddToList}
                   onEdit={handleOpenEditor}
-                  busy={listBusy}
+                  busy={listBusy || listEntryLoading}
                 />
 
                 {(anime.description || (anime.genres?.length ?? 0) > 0 || safeTags.length > 0) && (
@@ -789,6 +815,10 @@ export default function MediaDetails({
                     title="Characters"
                     icon={UsersIcon}
                     kind="character"
+                    key={`${mediaType}:${mediaId}:characters`}
+                    mediaId={mediaId}
+                    mediaType={mediaType}
+                    pageInfo={anime.characters?.pageInfo}
                     edges={characterEdges}
                     onSelect={setSelectedPerson}
                   />
@@ -799,6 +829,10 @@ export default function MediaDetails({
                     title={isManga ? "Creators & staff" : "Staff"}
                     icon={UserGroupIcon}
                     kind="staff"
+                    key={`${mediaType}:${mediaId}:staff`}
+                    mediaId={mediaId}
+                    mediaType={mediaType}
+                    pageInfo={anime.staff?.pageInfo}
                     edges={staffEdges}
                     onSelect={setSelectedPerson}
                   />
@@ -870,6 +904,7 @@ export default function MediaDetails({
               </div>
             </section>
           </div>
+          </div>
         </div>
 
         <div className="pointer-events-none absolute inset-x-0 bottom-4 z-50 flex justify-center">
@@ -883,7 +918,7 @@ export default function MediaDetails({
             <ActionButton
               label={listEntry ? "Edit list entry" : "Add to list"}
               onClick={listEntry ? handleOpenEditor : handleAddToList}
-              disabled={listBusy}
+              disabled={listBusy || listEntryLoading}
             >
               {listEntry ? (
                 <PencilSquareIcon className="h-5 w-5" />
@@ -905,7 +940,7 @@ export default function MediaDetails({
                     : "Start watching (+1)"
               }
               onClick={handleQuickProgress}
-              disabled={listBusy}
+              disabled={listBusy || listEntryLoading}
             >
               <span className="text-base font-semibold tracking-wide">+1</span>
             </ActionButton>
@@ -915,7 +950,7 @@ export default function MediaDetails({
             <ActionButton
               label={isFavorite ? "Remove favorite" : "Add to favorites"}
               onClick={handleToggleFavorite}
-              disabled={listBusy}
+              disabled={listBusy || listEntryLoading}
               active={isFavorite}
             >
               {isFavorite ? (
@@ -973,6 +1008,14 @@ export default function MediaDetails({
 
       {isRelationsOpen && (
         <RelationsModal
+          onLibraryChanged={async (id, type) => {
+            if (id === mediaId && type === mediaType) await loadListEntry(mediaId);
+            await onListChanged?.();
+          }}
+          initialView={relationsInitialView}
+          anime={mediaType === "ANIME" ? anime : undefined}
+          titleLanguage={titleLanguage}
+          hideAdultContent={hideAdultContent}
           edges={relationEdges}
           onSelectMedia={(relatedId, relatedType) => {
             setIsRelationsOpen(false);
@@ -1051,49 +1094,13 @@ function AlternateTitles({
   displayedTitle: string;
   synonyms: string[];
 }) {
-  const alternatives = [animeTitle?.english, animeTitle?.romaji, animeTitle?.native]
-    .filter((value): value is string => Boolean(value?.trim()))
-    .filter(
-      (value, index, values) =>
-        value.toLocaleLowerCase() !== displayedTitle.toLocaleLowerCase() &&
-        values.findIndex((candidate) => candidate.toLocaleLowerCase() === value.toLocaleLowerCase()) ===
-          index
-    );
-  const usedTitles = new Set(
-    [displayedTitle, ...alternatives].map((value) => value.trim().toLocaleLowerCase())
-  );
-  const uniqueSynonyms = synonyms
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .filter((value) => {
-      const normalized = value.toLocaleLowerCase();
-      if (usedTitles.has(normalized)) return false;
-      usedTitles.add(normalized);
-      return true;
-    });
-
-  if (!alternatives.length && !uniqueSynonyms.length) return null;
-
-  const fullText = [
-    alternatives.join(" · "),
-    uniqueSynonyms.length ? `Also known as: ${uniqueSynonyms.join(" · ")}` : "",
-  ]
-    .filter(Boolean)
-    .join(" | ");
-
+  const alternatives = getAlternateTitles(animeTitle, synonyms, displayedTitle);
+  if (!alternatives.length) return null;
+  const fullText = alternatives.join(" \u00b7 ");
   return (
     <Tooltip content={fullText} as="div" className="mt-2 block max-w-4xl" focusable>
       <p className="line-clamp-2 text-sm leading-6 text-white/42">
-      {alternatives.join(" · ")}
-      {alternatives.length > 0 && uniqueSynonyms.length > 0 && (
-        <span className="mx-2 text-white/20">|</span>
-      )}
-      {uniqueSynonyms.length > 0 && (
-        <span>
-          <span className="text-white/30">Also known as:</span>{" "}
-          {uniqueSynonyms.join(" · ")}
-        </span>
-      )}
+        <span className="text-white/30">Alternate titles:</span>{" "}{fullText}
       </p>
     </Tooltip>
   );
@@ -1198,8 +1205,6 @@ function WatchOverview({
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    if (!nextAiringEpisode?.airingAt) return;
-
     const interval = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(interval);
   }, [nextAiringEpisode?.airingAt]);
@@ -1751,7 +1756,7 @@ function PersonalListPanel({
 
   return (
     <aside className="rounded-3xl border border-white/10 bg-white/3 p-5">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.22em] text-white/35">
             Your progress
@@ -1772,6 +1777,11 @@ function PersonalListPanel({
           </div>
         </div>
 
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/25 px-3 py-1.5 text-xs text-white/50">
+            <ClockIcon aria-hidden="true" className="h-3.5 w-3.5" />
+            Updated {formatLocalDate(entry.updated_at, { month: "short", day: "numeric" })}
+          </span>
         <Tooltip content="Edit list entry">
           <button
             onClick={onEdit}
@@ -1782,6 +1792,7 @@ function PersonalListPanel({
             <PencilSquareIcon className="h-5 w-5" />
           </button>
         </Tooltip>
+        </div>
       </div>
 
       {progressPercent !== null && (
@@ -1798,14 +1809,6 @@ function PersonalListPanel({
         </div>
       )}
 
-      <div className="mt-5 grid grid-cols-2 gap-3">
-        <ListStat label="Score" value={entry.score ?? "-"} icon={StarIcon} />
-        <ListStat
-          label="Updated"
-          value={formatLocalDate(entry.updated_at, { month: "short", day: "numeric" })}
-          icon={ClockIcon}
-        />
-      </div>
 
       {entry.notes?.trim() && <ExpandableNotes notes={entry.notes.trim()} />}
     </aside>
@@ -1878,24 +1881,6 @@ function ExpandableNotes({ notes }: { notes: string }) {
   );
 }
 
-function ListStat({
-  label,
-  value,
-  icon: Icon,
-}: {
-  label: string;
-  value: string | number;
-  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-      <Icon className="h-4 w-4 text-white/40" />
-      <p className="mt-3 text-xs text-white/35">{label}</p>
-      <p className="mt-1 truncate text-sm font-medium text-white/80">{value}</p>
-    </div>
-  );
-}
-
 function ContentSection({
   title,
   icon: Icon,
@@ -1964,6 +1949,9 @@ function StoryAndTaxonomy({
               className={`overflow-hidden transition-[max-height] duration-700 ease-in-out ${
                 expanded ? "max-h-[100rem]" : hasMore ? "h-full" : ""
               }`}
+              style={{ maskImage: hasMore && !expanded
+                ? 'linear-gradient(to bottom, black calc(100% - 7rem), transparent)'
+                : undefined }}
             >
               <div
                 className="whitespace-pre-line text-sm leading-7 text-white/72"
@@ -1972,9 +1960,6 @@ function StoryAndTaxonomy({
               </div>
             </div>
 
-            {hasMore && !expanded && (
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-linear-to-t from-[#151515] via-[#151515]/90 to-transparent" />
-            )}
           </div>
 
           {hasMore && (
@@ -2051,22 +2036,68 @@ function StoryAndTaxonomy({
 }
 
 function PeopleShelf({
+  mediaId,
+  mediaType,
+  pageInfo,
   title,
   icon: Icon,
   kind,
   edges,
   onSelect,
 }: {
+  mediaId: number;
+  mediaType: MediaType;
+  pageInfo?: { currentPage: number; hasNextPage: boolean };
   title: string;
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   kind: PeopleModalItem["kind"];
   edges: PersonEdge[];
   onSelect: (item: PeopleModalItem) => void;
 }) {
-  return (
-    <ContentSection title={title} icon={Icon}>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
-        {edges.map((edge, index) => {
+  const [expanded, setExpanded] = useState(false);
+  const [loadedEdges, setLoadedEdges] = useState<PersonEdge[] | null>(null);
+  const [fullyLoaded, setFullyLoaded] = useState(pageInfo?.hasNextPage === false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [peopleError, setPeopleError] = useState<string | null>(null);
+  const nextPage = useRef(pageInfo?.hasNextPage ? (pageInfo.currentPage + 1) : 1);
+  const busy = useRef(false);
+  const active = useRef(true);
+  const expandedRef = useRef(false);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const allEdges = loadedEdges ?? edges;
+  async function loadRemaining() {
+    if (busy.current || fullyLoaded || mediaId <= 0) return;
+    busy.current = true; setLoadingMore(true); setPeopleError(null);
+    let accumulated = [...allEdges];
+    try {
+      while (active.current && expandedRef.current) {
+        const page = nextPage.current;
+        const result = await window.api.getMediaPeople(mediaType, mediaId, kind, page);
+        if (!active.current) return;
+        if (result.id !== mediaId || result.type !== mediaType || result.kind !== kind || result.pageInfo.currentPage !== page) throw new Error('Unexpected people response.');
+        accumulated = page === 1 ? result.edges : [...accumulated, ...result.edges];
+        setLoadedEdges(accumulated);
+        nextPage.current = page + 1;
+        if (!result.pageInfo.hasNextPage) { setFullyLoaded(true); break; }
+      }
+    } catch {
+      if (active.current) setPeopleError('Some entries could not load.');
+    } finally {
+      busy.current = false;
+      if (active.current) setLoadingMore(false);
+    }
+  }
+  const toggle = allEdges.length > 8 || !fullyLoaded ? <div className="flex items-center gap-2">
+    {loadingMore && <span role="status" className="text-xs text-white/35">Loading… {allEdges.length} found</span>}
+    {peopleError && expanded && <button type="button" onClick={() => void loadRemaining()} className="text-xs text-amber-200/70">Retry</button>}
+    <button type="button" aria-expanded={expanded} onClick={() => {
+      expandedRef.current = !expanded; setExpanded(!expanded);
+      if (!expanded) void loadRemaining();
+    }} className="flex shrink-0 items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/60 transition hover:bg-white/10 hover:text-white/85 focus:outline-none focus:ring-2 focus:ring-(--app-accent)/55">
+      {expanded ? 'Show less' : 'Show more'}<ChevronDownIcon className={`h-3.5 w-3.5 transition-transform duration-500 ${expanded ? 'rotate-180' : ''}`} />
+    </button>
+  </div> : undefined;
+  const cards = allEdges.map((edge, index) => {
           const person = getPersonFromEdge(edge, kind);
           const voiceActor = getVoiceActorFromEdge(edge);
           const name = getPersonName(person);
@@ -2080,7 +2111,7 @@ function PeopleShelf({
 
           return (
             <button
-              key={`${title}-${person?.id ?? index}-${edge.role}`}
+              key={`${title}-${person?.id ?? index}-${edge.role}-${index}`}
               type="button"
               onClick={() => onSelect(modalItem)}
               className="overflow-hidden rounded-3xl border border-white/10 bg-white/3 text-left transition hover:border-(--app-accent)/30 hover:bg-(--app-accent-soft) focus:outline-none focus:ring-2 focus:ring-(--app-accent)/55"
@@ -2105,8 +2136,14 @@ function PeopleShelf({
               </div>
             </button>
           );
-        })}
+        });
+  return (
+    <ContentSection title={title} icon={Icon} action={toggle}>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">{cards.slice(0, 8)}</div>
+      <div className={`grid transition-[grid-template-rows,opacity] duration-500 ease-in-out ${expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`} aria-hidden={!expanded} inert={!expanded}>
+        <div className="min-h-0 overflow-hidden"><div className="grid grid-cols-2 gap-3 pt-3 md:grid-cols-3 xl:grid-cols-4">{cards.slice(8)}</div></div>
       </div>
+      {peopleError && expanded && <p role="status" className="mt-2 text-xs text-amber-200/70">{peopleError}</p>}
     </ContentSection>
   );
 }
@@ -2407,11 +2444,13 @@ function RelatedAnimeShelf({
   onSelectMedia,
   showAll = false,
   bare = false,
+  libraryActions = false,
 }: {
   edges: RelatedAnimeEdge[];
   onSelectMedia?: (mediaId: number, mediaType: MediaType) => void;
   showAll?: boolean;
   bare?: boolean;
+  libraryActions?: boolean;
 }) {
   const sortedItems = [...edges].sort(
     (a, b) => getRelationPriority(a?.relationType) - getRelationPriority(b?.relationType)
@@ -2432,7 +2471,7 @@ function RelatedAnimeShelf({
 
           const tooltipLabel = canOpen ? `Open ${titleText}` : titleText;
 
-          return (
+          const card = (
             <Tooltip key={`${media?.id ?? index}-${edge.relationType ?? "related"}`} content={tooltipLabel} as="div" className="block">
             <button
               type="button"
@@ -2508,6 +2547,9 @@ function RelatedAnimeShelf({
             </button>
             </Tooltip>
           );
+          return libraryActions && relatedMediaType && Number.isInteger(mediaId) && mediaId > 0 ? (
+            <div key={`${mediaId}-${index}`} className="space-y-2">{card}<div className="px-3"><FranchiseLibraryControls id={mediaId} type={relatedMediaType} title={titleText} /></div></div>
+          ) : card;
         });
 
   if (bare || showAll) {
@@ -2520,18 +2562,30 @@ function RelatedAnimeShelf({
 }
 
 function RelationsModal({
+  onLibraryChanged,
+  initialView,
+  anime,
+  titleLanguage,
+  hideAdultContent,
   edges,
   onSelectMedia,
   onClose,
 }: {
+  onLibraryChanged?: (id: number, type: MediaType) => void | Promise<void>;
+  initialView: "relations" | "watch";
+  anime?: AnimeMedia;
+  titleLanguage: TitleLanguage;
+  hideAdultContent: boolean;
   edges: RelatedAnimeEdge[];
   onSelectMedia?: (mediaId: number, mediaType: MediaType) => void;
   onClose: () => void;
 }) {
+  const [view, setView] = useState<"relations" | "watch">(initialView);
+  const [watchOpened, setWatchOpened] = useState(initialView === "watch");
   return (
     <ModalShell
       onClose={onClose}
-      ariaLabel="All related titles"
+      ariaLabel={view === "watch" ? "Suggested watch order" : "All related titles"}
       panelClassName="flex h-[min(48rem,calc(100vh-5rem))] max-w-4xl flex-col overflow-hidden p-0 text-white"
       zClassName="z-60"
       showCloseButton
@@ -2545,20 +2599,28 @@ function RelationsModal({
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">
               Franchise map
             </p>
-            <h2 className="mt-1 text-xl font-semibold text-white">Related titles</h2>
+            <h2 className="mt-1 text-xl font-semibold text-white">{view === "watch" ? "Suggested watch order" : "Related titles"}</h2>
           </div>
         </div>
         <p className="mt-3 text-sm text-white/45">
-          {edges.length} direct {edges.length === 1 ? "connection" : "connections"}, ordered by relationship.
+          {view === "watch" ? "Explore connected anime in first-release order." : `${edges.length} direct ${edges.length === 1 ? "connection" : "connections"}, ordered by relationship.`}
         </p>
+        {anime && <div className="mt-4 flex gap-2" aria-label="Franchise views">
+          <button type="button" aria-pressed={view === "relations"} onClick={() => setView("relations")} className={`rounded-xl px-3 py-2 text-sm ${view === "relations" ? "bg-white/10 text-white" : "text-white/50 hover:bg-white/5"}`}>Related titles</button>
+          <button type="button" aria-pressed={view === "watch"} onClick={() => { setWatchOpened(true); setView("watch"); }} className={`rounded-xl px-3 py-2 text-sm ${view === "watch" ? "bg-white/10 text-white" : "text-white/50 hover:bg-white/5"}`}>Suggested watch order</button>
+        </div>}
       </div>
       <div className="scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 pr-4 [scrollbar-gutter:stable]">
-        <RelatedAnimeShelf
+        <FranchiseLibraryProvider onChanged={onLibraryChanged}>
+        {watchOpened && anime && <div hidden={view !== "watch"}><WatchOrder seed={anime} titleLanguage={titleLanguage} hideAdultContent={hideAdultContent} onSelect={onSelectMedia ? id => onSelectMedia(id, "ANIME") : undefined} /></div>}
+        <div hidden={view !== "relations"}><RelatedAnimeShelf
           edges={edges}
           onSelectMedia={onSelectMedia}
           showAll
           bare
-        />
+          libraryActions
+        /></div>
+        </FranchiseLibraryProvider>
       </div>
     </ModalShell>
   );
@@ -3926,6 +3988,11 @@ function getSeriesTiming(
   const future = difference < 0;
   const absoluteDays = Math.floor(Math.abs(difference) / 86_400_000);
   const span = formatCalendarSpan(absoluteDays);
+  const current = new Date(now);
+  let years = current.getFullYear() - start.getFullYear();
+  const anniversary = new Date(current.getFullYear(), start.getMonth(), start.getDate());
+  if (current.getTime() < anniversary.getTime()) years -= 1;
+  const ageSpan = years >= 1 ? `${years} ${years === 1 ? "year" : "years"}` : span;
 
   return future
     ? {
@@ -3935,7 +4002,7 @@ function getSeriesTiming(
       }
     : {
         label: "Series age",
-        value: span === "today" ? "First aired today" : `First aired ${span} ago`,
+        value: ageSpan === "today" ? "First aired today" : `First aired ${ageSpan} ago`,
         context: formatFuzzyDate(date),
       };
 }
@@ -4175,13 +4242,7 @@ function getPersonName(person: Person | null | undefined) {
 function getMediaTitle(
   media: AnimeMedia | RecommendationMedia | RelatedMedia | null | undefined
 ) {
-  return (
-    media?.title?.userPreferred ||
-    media?.title?.english ||
-    media?.title?.romaji ||
-    media?.title?.native ||
-    "Unknown title"
-  );
+  return getPreferredTitle(media?.title, "userPreferred");
 }
 
 function getTrailerUrl(trailer?: {

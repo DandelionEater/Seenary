@@ -907,15 +907,26 @@ namespace SeenaryInstaller
             openButton.Click += delegate
             {
                 var appPath = Path.Combine(destination, "Seenary.exe");
-                if (File.Exists(appPath))
+                try
                 {
+                    if (!File.Exists(appPath))
+                    {
+                        throw new FileNotFoundException("The installed Seenary application was not found.");
+                    }
                     Process.Start(new ProcessStartInfo
                     {
                         FileName = appPath,
+                        WorkingDirectory = destination,
                         UseShellExecute = true
                     });
+                    Close();
                 }
-                Close();
+                catch (Exception)
+                {
+                    MessageBox.Show(
+                        "Seenary was installed, but Windows could not open it. You can retry Open Seenary or launch it from the Start menu.",
+                        "Seenary is installed", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
             };
             view.Children.Add(openButton);
 

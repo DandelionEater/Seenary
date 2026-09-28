@@ -56,6 +56,7 @@ const {
   saveManga,
   saveAnimeSummary,
   updateAnimeFranchiseStartDate,
+  getSavedAnimeSeriesDate,
   getAnimeById,
   getMangaById,
   getPersonDetails,
@@ -938,11 +939,13 @@ ipcMain.handle('anilist:search-media', async (_event, payload) => {
   return await searchOrchestrator.searchMedia(query, { hideAdultContent });
 });
 
+ipcMain.handle('media:people', (_event, payload) => anilist.getMediaPeople(payload.type, payload.id, payload.kind, payload.page));
+
 ipcMain.handle('anilist:discover-media', async (_event, payload) => {
   const hideAdultContent =
     typeof payload === 'object' && payload !== null ? payload.hideAdultContent : undefined;
 
-  return await anilist.getDiscoverMedia({ hideAdultContent });
+  return await anilist.getDiscoverMedia({ hideAdultContent, mediaType: payload?.mediaType });
 });
 
 ipcMain.handle('anilist:discover-shelf', async (_event, payload) => {
@@ -1898,6 +1901,8 @@ async function getAnimeDetails(id) {
 }
 
 async function calculateAnimeFranchiseStartDate(id) {
+  const savedDate = getSavedAnimeSeriesDate(id);
+  if (savedDate) return savedDate;
   const cachedAnime = getAnimeById(id);
   if (cachedAnime?.franchise_start_resolved && cachedAnime.franchise_start_date) {
     return mapDbAnimeForFrontend(cachedAnime).franchiseStartDate;
@@ -1909,7 +1914,10 @@ async function calculateAnimeFranchiseStartDate(id) {
     if (media?.id) saveAnime(mapAnimeForDb(media));
   }
 
-  const franchiseStartDate = await anilist.findAnimeSeriesStartDate(media);
+  const franchiseStartDate = await anilist.findAnimeSeriesStartDate(media, {
+    getSaved: getSavedAnimeSeriesDate,
+    save: updateAnimeFranchiseStartDate,
+  });
   if (!franchiseStartDate?.year) {
     throw new Error('AniList did not provide enough dates to calculate the franchise age.');
   }

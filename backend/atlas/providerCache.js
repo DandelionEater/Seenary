@@ -6,6 +6,7 @@ function createProviderCache({ queries, now = () => Date.now(), requestSpacingMs
   let providerTail = Promise.resolve();
   let lastStart = 0;
   function kindFor(key) {
+    if (key.startsWith('franchise-start:')) return 'series-start';
     if (key.startsWith('details:')) return 'details';
     if (key.startsWith('mapping:mal:')) return 'mapping';
     try {
@@ -30,7 +31,17 @@ function createProviderCache({ queries, now = () => Date.now(), requestSpacingMs
     providerTail = run.catch(() => {});
     return run;
   }
-  async function fetchCached(key, fetcher, ttl, consume) {
+  async function fetchCached(key, fetcher, ttl, consume, { staleWhileRevalidate = false } = {}) {
+    if (staleWhileRevalidate) {
+      const id = crypto.createHash('sha256').update(key).digest('hex');
+      const cached = await queries.findOne({ _id: id });
+      if (cached?.payload && new Date(cached.freshUntil).getTime() <= now()) {
+        await touch(id, cached);
+        const refreshing = new Date(cached.retryAt || 0).getTime() <= now();
+        if (refreshing) void fetchCached(key, fetcher, ttl, consume).catch(() => {});
+        return { payload: cached.payload, stale: true, refreshing };
+      }
+    }
     if (inFlight.has(key)) return inFlight.get(key);
     const task = (async () => {
       const id = crypto.createHash('sha256').update(key).digest('hex');

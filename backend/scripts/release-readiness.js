@@ -78,7 +78,7 @@ function listJavaScriptFiles(directory) {
     if (entry.isDirectory() && ignoredDirectories.has(entry.name)) continue;
     const entryPath = path.join(directory, entry.name);
     if (entry.isDirectory()) files.push(...listJavaScriptFiles(entryPath));
-    else if (entry.isFile() && entry.name.endsWith('.js')) files.push(entryPath);
+    else if (entry.isFile() && /\.(?:js|cjs|mjs)$/.test(entry.name)) files.push(entryPath);
   }
 
   return files.sort();
@@ -327,6 +327,22 @@ function main() {
     [path.join(__dirname, 'cache-maintenance-smoke.js')],
     { cwd: backendDir, shell: false }
   );
+  for (const script of [
+    'series-start-date-smoke.js', 'atlas-metadata-smoke.js', 'atlas-details-speed-smoke.js',
+    'atlas-discover-speed-smoke.js', 'atlas-discover-types-smoke.js', 'atlas-people-smoke.js',
+    'atlas-mal-fallback-smoke.js', 'atlas-inbound-smoke.js', 'atlas-cache-maintenance-smoke.js',
+    'atlas-storage-ownership-smoke.js',
+  ]) {
+    runCommand(script, process.execPath, [path.join(__dirname, script)], { cwd: backendDir, shell: false });
+  }
+  runCommand('Desktop/provider regression tests', process.execPath,
+    ['--test', path.join(backendDir, 'test', '*.test.js')], { cwd: backendDir, shell: false });
+  for (const script of [
+    'desktop-improvements-smoke.mjs', 'watch-order-smoke.mjs', 'detail-cache-smoke.mjs',
+    'franchise-library-smoke.mjs', 'cloud-library-smoke.mjs',
+  ]) {
+    runCommand(script, process.execPath, [path.join(frontendDir, 'scripts', script)], { cwd: frontendDir, shell: false });
+  }
   runCommand(
     'Details cache fallback smoke test',
     require('electron'),

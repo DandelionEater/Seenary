@@ -15,6 +15,13 @@ function registerAppLifecycleIpc() {
     app.exit(0);
   });
 
+  ipcMain.handle('app:diagnostics', () => {
+    let profileWritable = false;
+    try { require('node:fs').accessSync(app.getPath('userData'), require('node:fs').constants.W_OK); profileWritable = true; } catch { /* No paths or raw exceptions in reports. */ }
+    return { platform: process.platform, architecture: process.arch, appVersion: app.getVersion(),
+      electronVersion: process.versions.electron, chromiumVersion: process.versions.chrome, packaged: app.isPackaged, profileWritable };
+  });
+
   ipcMain.handle('app:repair-caches', async () => {
     try {
       const desktopSession = session.defaultSession;

@@ -42,7 +42,7 @@ class Collection {
     for (const key of Object.keys(update.$unset || {})) delete row[key];
     return clone(row);
   }
-  async updateOne(query, update) { return this.findOneAndUpdate(query, update); }
+  async updateOne(query, update, options) { return this.findOneAndUpdate(query, update, options); }
   async updateMany(query, update) {
     const rows = this.rows.filter(row => matches(row, query));
     for (const row of rows) await this.findOneAndUpdate({ _id: row._id }, update);
@@ -103,6 +103,29 @@ async function main() {
   const afterFranchiseCall = calls;
   assert.deepEqual(await service.franchiseStartDate(1), { year: 2020, month: 10, day: 3 });
   assert.equal(calls, afterFranchiseCall, 'franchise start dates use their dedicated cache');
+  const seriesCalls = calls;
+  clock += 366 * day;
+  service = create();
+  assert.deepEqual(await service.franchiseStartDate(1), { year: 2020, month: 10, day: 3 });
+  assert.equal(calls, seriesCalls, 'saved premiere survives service restart and a year without provider calls');
+  clock -= 366 * day;
+  const originalSeriesProvider = provider.franchiseStartDate;
+  const originalDetailsProvider = provider.details;
+  provider.details = async (_type, id) => { calls++; return { ...clone(raw), id, title: { romaji: 'Season Five Fixture' } }; };
+  provider.franchiseStartDate = async (_details, options) => {
+    calls++;
+    const date = { year: 1998, month: 4, day: 18 };
+    await options.save(4, date);
+    return date;
+  };
+  await service.franchiseStartDate(5);
+  const afterSeasonFive = calls;
+  service = create();
+  assert.deepEqual(await service.franchiseStartDate(4), { year: 1998, month: 4, day: 18 });
+  assert.equal(calls, afterSeasonFive, 'unopened prequel reuses the shared date after restart');
+  provider.franchiseStartDate = originalSeriesProvider;
+  provider.details = originalDetailsProvider;
+  await repo.media.deleteOne({ anilistId: 5 });
   assert.equal((await service.query('getAnimeThemeMusic', [1, ['Saved title']])).length, 1);
   offline = true;
   assert.deepEqual(await service.query('getAnimeThemeMusic', [2, ['Unavailable title']]), [], 'AnimeThemes outages degrade to an empty optional section');
@@ -126,12 +149,12 @@ async function main() {
   assert.equal((await media.byProvider('ANIME', 'anilist', 1)).sources.mal.metrics.mean, 8);
 
   clock += 8 * 3600000; offline = true;
-  const stale = await service.details('ANIME', 1);
+  const stale = await service.details('ANIME', 1, { waitForRefresh: true });
   assert.equal(stale.cache.stale, true);
   assert.equal(stale.title.romaji, 'New name');
   const attempts = calls;
   service = create(); // Persistent retry state survives service restart.
-  await service.details('ANIME', 1); assert.equal(calls, attempts);
+  await service.details('ANIME', 1, { waitForRefresh: true }); assert.equal(calls, attempts);
   const search = await service.query('searchMedia', ['New name', true]);
   assert.equal(search.anime.length, 1); assert(search.warnings.length);
   const savedOnly = await service.query('searchMedia', ['Saved English', true]);

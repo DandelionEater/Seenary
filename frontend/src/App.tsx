@@ -1,3 +1,4 @@
+import { BackgroundGlowsContext } from "./components/ui/backgroundGlowsContext";
 import {
   lazy,
   Suspense,
@@ -101,6 +102,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   browseCardStyle: "default",
   backgroundDim: 65,
   animationLevel: "full",
+  backgroundGlows: true,
   compactMode: false,
   discoverDensity: "balanced",
   homeDensity: "balanced",
@@ -354,6 +356,9 @@ function App() {
   const libraryLoadPromiseRef = useRef<{ generation: number; promise: Promise<void> } | null>(null);
   const homeScrollTopRef = useRef(0);
   const homeScrollElementRef = useRef<HTMLDivElement | null>(null);
+  const [recentTrayTitles, setRecentTrayTitles] = useState<Array<{ id: number; type: "ANIME" | "MANGA"; title: string }>>([]);
+  const [requestedLibraryStatus, setRequestedLibraryStatus] = useState<{ status: "watching"; requestId: number } | null>(null);
+  const consumeLibraryStatus = useCallback(() => setRequestedLibraryStatus(null), []);
   const listScrollTopRef = useRef(0);
   const listScrollElementRef = useRef<HTMLDivElement | null>(null);
   const searchRequestIdRef = useRef(0);
@@ -1820,6 +1825,41 @@ function App() {
     userId: authUser?.id ?? null,
   });
 
+  const trayAccountId = authUser?.id;
+  const trayOpenMedia = useRef(handleOpenMediaDetails);
+  trayOpenMedia.current = handleOpenMediaDetails;
+  useEffect(() => {
+    setRecentTrayTitles([]);
+    window.desktopLibrary?.update({ signedIn: false, watching: [], recent: [], continueWatching: null });
+    if (trayAccountId == null) return;
+    const opened = (event: Event) => {
+      const item = (event as CustomEvent<{ id: number; type: "ANIME" | "MANGA"; title: string }>).detail;
+      if (!item || !Number.isSafeInteger(item.id) || !["ANIME", "MANGA"].includes(item.type)) return;
+      setRecentTrayTitles(previous => [item, ...previous.filter(entry => entry.id !== item.id || entry.type !== item.type)].slice(0, 6));
+    };
+    window.addEventListener('seenary:title-opened', opened);
+    return () => { window.removeEventListener('seenary:title-opened', opened); window.desktopLibrary?.update({ signedIn: false, watching: [], recent: [], continueWatching: null }); };
+  }, [trayAccountId]);
+
+  useEffect(() => {
+    if (trayAccountId == null) return;
+    const watching = privacySafeTrackedEntries.filter(entry => entry.status === 'watching')
+      .sort((a, b) => Date.parse(b.updated_at || '') - Date.parse(a.updated_at || ''))
+      .map(entry => ({ id: entry.anime_id, type: 'ANIME' as const, title: getPreferredTitle({ userPreferred: entry.title_preferred, english: entry.title_english, romaji: entry.title_romaji, native: entry.title_native }, settings.titleLanguage) }));
+    const continuable = watching.filter(item => { const entry = privacySafeTrackedEntries.find(entry => entry.anime_id === item.id); return entry && (!entry.episodes || entry.progress < entry.episodes); });
+    const recentWatching = recentTrayTitles.find(item => continuable.some(entry => entry.id === item.id && entry.type === item.type));
+    window.desktopLibrary?.update({ signedIn: true, watching: watching.slice(0, 6), recent: recentTrayTitles, continueWatching: recentWatching ?? continuable[0] ?? null });
+  }, [trayAccountId, privacySafeTrackedEntries, recentTrayTitles, settings.titleLanguage]);
+
+  useEffect(() => {
+    if (trayAccountId == null) return;
+    return window.desktopLibrary?.onNavigate(action => {
+      if (action.action === 'watching') {
+        setLibraryMediaType('ANIME'); setCurrentView('list'); setRequestedLibraryStatus({ status: 'watching', requestId: Date.now() });
+      } else { trayOpenMedia.current(action.id, action.type); }
+    });
+  }, [trayAccountId]);
+
   if (checkingSession) {
     return (
       <div className="h-screen w-screen bg-transparent max-sm:h-dvh">
@@ -1831,6 +1871,7 @@ function App() {
   }
 
   return (
+    <BackgroundGlowsContext.Provider value={settings.backgroundGlows}>
     <div
       className="h-screen w-screen bg-transparent max-sm:h-dvh"
       style={
@@ -1973,6 +2014,9 @@ function App() {
                   />
                   ) : currentView === "list" ? (
                     <MyListPage
+                    key={`${authUser.id}:${libraryMediaType}`}
+                    requestedStatus={requestedLibraryStatus}
+                    onRequestedStatusHandled={consumeLibraryStatus}
                     userId={authUser.id}
                     entries={privacySafeTrackedEntries}
                     mangaEntries={privacySafeTrackedMangaEntries}
@@ -2326,6 +2370,7 @@ function App() {
         )}
       </div>
     </div>
+    </BackgroundGlowsContext.Provider>
   );
 }
 
@@ -2651,6 +2696,7 @@ function normalizeAppSettings(value: Partial<AppSettings> | null | undefined): A
     animationLevel: animationLevels.includes(value?.animationLevel as AppSettings["animationLevel"])
       ? (value?.animationLevel as AppSettings["animationLevel"])
       : DEFAULT_APP_SETTINGS.animationLevel,
+    backgroundGlows: typeof value?.backgroundGlows === "boolean" ? value.backgroundGlows : DEFAULT_APP_SETTINGS.backgroundGlows,
     compactMode:
       typeof value?.compactMode === "boolean"
         ? value.compactMode

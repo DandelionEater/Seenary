@@ -56,14 +56,7 @@ export function MediaCard({
         onSelect ? "cursor-pointer" : "cursor-default"
       }`}
       role={onSelect ? "button" : undefined}
-      tabIndex={onSelect ? 0 : undefined}
       onClick={() => onSelect?.(media.id)}
-      onKeyDown={(e) => {
-        if (onSelect && (e.key === "Enter" || e.key === " ")) {
-          e.preventDefault();
-          onSelect(media.id);
-        }
-      }}
     >
       <div className="browse-search-poster relative aspect-2/3 overflow-hidden rounded-2xl">
       <img

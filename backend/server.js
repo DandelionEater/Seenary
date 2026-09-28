@@ -26,6 +26,7 @@ const {
   saveAnime,
   saveManga,
   updateAnimeFranchiseStartDate,
+  getSavedAnimeSeriesDate,
   getAnimeById,
   getMangaById,
   getPersonDetails,
@@ -149,6 +150,7 @@ const DEFAULT_APP_SETTINGS = {
   browseCardStyle: 'default',
   backgroundDim: 65,
   animationLevel: 'full',
+  backgroundGlows: true,
   compactMode: false,
   discoverDensity: 'balanced',
   homeDensity: 'balanced',
@@ -1791,6 +1793,8 @@ async function getAnimeDetails(id) {
 }
 
 async function calculateAnimeFranchiseStartDate(id) {
+  const savedDate = getSavedAnimeSeriesDate(id);
+  if (savedDate) return savedDate;
   const cachedAnime = getAnimeById(id);
   if (cachedAnime?.franchise_start_resolved && cachedAnime.franchise_start_date) {
     return mapDbAnimeForFrontend(cachedAnime).franchiseStartDate;
@@ -1802,7 +1806,10 @@ async function calculateAnimeFranchiseStartDate(id) {
     if (media?.id) saveAnime(mapAnimeForDb(media));
   }
 
-  const franchiseStartDate = await anilist.findAnimeSeriesStartDate(media);
+  const franchiseStartDate = await anilist.findAnimeSeriesStartDate(media, {
+    getSaved: getSavedAnimeSeriesDate,
+    save: updateAnimeFranchiseStartDate,
+  });
   if (!franchiseStartDate?.year) {
     throw new Error('AniList did not provide enough dates to calculate the franchise age.');
   }
@@ -2020,8 +2027,10 @@ async function handleRpc(method, args, req, res) {
       return await searchOrchestrator.searchMedia(args[0], {
         hideAdultContent: args[1],
       });
+    case 'getMediaPeople':
+      return await anilist.getMediaPeople(args[0], args[1], args[2], args[3]);
     case 'getDiscoverMedia':
-      return await anilist.getDiscoverMedia({ hideAdultContent: args[0] });
+      return await anilist.getDiscoverMedia({ hideAdultContent: args[0], mediaType: args[1] });
     case 'getDiscoverShelfAnime':
       return await anilist.getDiscoverShelfAnime({
         shelfId: args[0],

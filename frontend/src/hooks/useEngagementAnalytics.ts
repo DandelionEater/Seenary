@@ -119,14 +119,12 @@ export function useEngagementAnalytics({
     };
 
     window.addEventListener("pointerdown", noteInteraction, { passive: true });
-    window.addEventListener("keydown", noteInteraction);
     window.addEventListener("online", retryAfterReconnect);
 
     return () => {
       active = false;
       window.clearInterval(intervalId);
       window.removeEventListener("pointerdown", noteInteraction);
-      window.removeEventListener("keydown", noteInteraction);
       window.removeEventListener("online", retryAfterReconnect);
     };
   }, [enabled, userId]);

@@ -1,6 +1,7 @@
 const { createProviderCache } = require('./providerCache');
 const { calculateObjectSize } = require('bson');
 const { validId, fillMissing } = require('./media');
+const { createHash } = require('node:crypto');
 
 const HOUR = 3600000;
 const DAY = 24 * HOUR;
@@ -62,7 +63,7 @@ function toMedia(document, cache = {}) {
   const result = { ...fillMissing(present, document.sources.anilist?.details || {}), id: legacy.id, idMal: legacy.idMal, type: document.type,
     seenaryId: document._id, cache: { provider: 'anilist', ...cache } };
   if (result.cache.provider === 'mal') result.warning = 'AniList is unavailable. Showing MyAnimeList information while Seenary retries in the background.';
-  else if (result.cache.stale) result.warning = 'Live title information is unavailable. Showing the latest details saved by Seenary.';
+  else if (result.cache.stale && !result.cache.refreshing) result.warning = 'Live title information is unavailable. Showing the latest details saved by Seenary.';
   result.providerMetrics = { anilist: document.sources.anilist?.metrics || {}, mal: document.sources.mal?.metrics || {} };
   for (const [camel, column] of Object.entries(METRICS)) if (document.sources.anilist?.metrics?.[column] !== undefined) result[camel] = document.sources.anilist.metrics[column];
   return result;
@@ -77,6 +78,18 @@ async function setupMetadata(db, prefix = '') {
 }
 function createMetadataService({ media, repo, queries, provider, malCache = null, malMapping = null, malImport = null, now = () => Date.now(), requestSpacingMs = 1500 }) {
   const { fetchCached, schedule } = createProviderCache({ queries, now, requestSpacingMs });
+  const detailRefreshes = new Map();
+  const seriesKey = id => createHash('sha256').update(`franchise-start:${id}`).digest('hex');
+  async function savedSeriesDate(id) {
+    const saved = await queries.findOne({ _id: seriesKey(id) });
+    return saved?.payload?.year ? saved.payload : null;
+  }
+  async function saveSeriesDate(id, date) {
+    await queries.updateOne({ _id: seriesKey(id) }, { $set: {
+      payload: date, kind: 'series-start', fetchedAt: new Date(now()),
+      freshUntil: new Date('9999-12-31'), lastAccessAt: new Date(now()), retryAt: new Date(0),
+    } }, { upsert: true });
+  }
   async function ingest(raw, type, group = 'card', observedAt = now()) {
     if (!raw || !validId(raw.id) || !['ANIME', 'MANGA'].includes(type) || raw.type && raw.type !== type || !raw.title) throw new Error('Invalid AniList media response.');
     let document = await media.ensure(type, 'anilist', raw.id);
@@ -140,8 +153,12 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
     ingest,
     async franchiseStartDate(id) {
       if (!validId(id)) throw new Error('Invalid Anime identity.');
+      const saved = await savedSeriesDate(id);
+      if (saved) return saved;
       const details = await this.details('ANIME', id);
-      const result = await fetchCached(`franchise-start:${id}`, () => provider.franchiseStartDate(details), 30 * DAY, payload => {
+      const result = await fetchCached(`franchise-start:${id}`, () => provider.franchiseStartDate(details, {
+        getSaved: savedSeriesDate, save: saveSeriesDate,
+      }), 100 * 365.25 * DAY, payload => {
         if (!payload?.year || !Number.isInteger(Number(payload.year))) throw new Error('Invalid franchise start date.');
       });
       return result.payload;
@@ -187,25 +204,36 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
       const count = type => groups.filter(group => group.mediaType === type).reduce((sum, group) => sum + group.items.length, 0);
       return { ok: true, username: username.trim(), preview: { groups, totalFound: count('ANIME') + count('MANGA'), animeFound: count('ANIME'), mangaFound: count('MANGA') } };
     },
-    async details(type, id) {
+    async details(type, id, { waitForRefresh = false } = {}) {
       if (malCache && Number.isSafeInteger(id) && id < 0 && ['ANIME', 'MANGA'].includes(type)) {
         const mapped = await media.byProvider(type, 'mal', -id);
-        if (mapped?.anilistId) return this.details(type, mapped.anilistId);
+        if (mapped?.anilistId) return this.details(type, mapped.anilistId, { waitForRefresh });
         let saved;
         try { saved = await malCache.details(type, -id); }
         catch (error) {
           const mapping = malMapping ? await malMapping.resolve(type, -id) : null;
-          if (mapping?.status === 'mapped') return this.details(type, mapping.anilistId);
+          if (mapping?.status === 'mapped') return this.details(type, mapping.anilistId, { waitForRefresh });
           throw error;
         }
         const mapping = malMapping ? await malMapping.resolve(type, -id) : null;
-        if (mapping?.status === 'mapped') return this.details(type, mapping.anilistId);
+        if (mapping?.status === 'mapped') return this.details(type, mapping.anilistId, { waitForRefresh });
         return { ...saved, ...(mapping ? { mapping, ...(mapping.status === 'review-required' ? {
           warning: 'This title has conflicting linked records. Your entries are preserved; mapping needs review.' } : {}) } : {}) };
       }
       if (!['ANIME', 'MANGA'].includes(type) || !validId(id)) throw new Error('Invalid media identity.');
       let document = await media.byProvider(type, 'anilist', id);
       if (document && new Date(document.sources.anilist?.groups?.details?.freshUntil || 0).getTime() > now()) return toMedia(document, { stale: false });
+      // A saved complete page is usable immediately; provider freshness is not a rendering gate.
+      if (!waitForRefresh && document?.sources.anilist?.groups?.details?.fetchedAt) {
+        const key = `${type}:${id}`;
+        if (!detailRefreshes.has(key)) {
+          const refresh = this.details(type, id, { waitForRefresh: true })
+            .catch(() => {})
+            .finally(() => detailRefreshes.delete(key));
+          detailRefreshes.set(key, refresh);
+        }
+        return toMedia(document, { stale: true, refreshing: true });
+      }
       try {
         const result = await fetchCached(`details:${type}:${id}`, () => provider.details(type, id), 6 * HOUR, async (raw, observedAt) => {
           if (raw?.id !== id) throw new Error('AniList returned another title.');
@@ -227,6 +255,17 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
       }
     },
     async query(method, args) {
+      if (method === 'getMediaPeople') {
+        const [type, id, kind, page = 1] = args;
+        if (!['ANIME', 'MANGA'].includes(type) || !validId(id) || !['character', 'staff'].includes(kind)
+            || !Number.isSafeInteger(page) || page < 1) throw new Error('Invalid people request.');
+        const result = await fetchCached(JSON.stringify([method, type, id, kind, page]),
+          () => provider.people(type, id, kind, page), 30 * DAY, payload => {
+            if (payload?.id !== id || payload.type !== type || payload.kind !== kind || !Array.isArray(payload.edges)
+                || payload.pageInfo?.currentPage !== page || typeof payload.pageInfo.hasNextPage !== 'boolean') throw new Error('Invalid people response.');
+          });
+        return { ...result.payload, ...(result.stale ? { warning: 'Showing saved people while the provider is unavailable.' } : {}) };
+      }
       if (method === 'getArtistMedia') {
         const [slug, page = 1, hideAdult = true] = args;
         if (typeof slug !== 'string' || !/^[a-zA-Z0-9_-]{1,120}$/.test(slug) || !Number.isInteger(page) || page < 1 || page > 100) throw new Error('Invalid artist page.');
@@ -291,16 +330,33 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
       }
       if (method === 'getDiscoverMedia') {
         const hideAdultContent = args[0] !== false;
+        const mediaType = args[1] ?? null;
+        if (mediaType && !['ANIME', 'MANGA'].includes(mediaType)) throw new Error('Invalid discovery media type.');
+        const cacheKey = JSON.stringify(mediaType ? [method, hideAdultContent, mediaType] : [method, hideAdultContent]);
+        if (mediaType) {
+          // Reuse the former combined snapshot while the first separate catalog refreshes.
+          const id = createHash('sha256').update(cacheKey).digest('hex');
+          if (!(await queries.findOne({ _id: id }))?.payload) {
+            const oldId = createHash('sha256').update(JSON.stringify([method, hideAdultContent])).digest('hex');
+            const old = await queries.findOne({ _id: oldId });
+            if (old?.payload) await queries.updateOne({ _id: id }, { $setOnInsert: {
+              payload: old.payload, freshUntil: old.freshUntil, fetchedAt: old.fetchedAt,
+              createdAt: new Date(now()), lastAccessAt: new Date(now()), kind: 'discovery',
+            } }, { upsert: true });
+          }
+        }
         try {
-          const result = await fetchCached(JSON.stringify([method, hideAdultContent]), () => provider.discover(hideAdultContent), HOUR, (payload, time) => {
+          const result = await fetchCached(cacheKey, () => provider.discover(hideAdultContent, mediaType), HOUR, (payload, time) => {
             if (!Array.isArray(payload?.anime?.shelves) || !Array.isArray(payload?.manga?.shelves)) throw new Error('Invalid discovery response.');
             return ingestTree(payload, null, time);
-          });
+          }, { staleWhileRevalidate: true });
           const payload = structuredClone(result.payload);
-          if (result.stale) for (const type of ['anime', 'manga']) {
+          if (mediaType === 'ANIME') payload.manga = { trending: [], shelves: [] };
+          if (mediaType === 'MANGA') payload.anime = { trending: [], shelves: [] };
+          if (result.stale && !result.refreshing) for (const type of ['anime', 'manga']) {
             if (Array.isArray(payload[type]?.shelves)) payload[type].shelves = payload[type].shelves.map(shelf => ({ ...shelf, warning: shelf.warning || 'Showing saved discovery results while AniList is unavailable.' }));
           }
-          return { ...payload, cache: { stale: result.stale } };
+          return { ...payload, cache: { stale: result.stale, refreshing: Boolean(result.refreshing) } };
         } catch {
           const documents = await repo.media.find(hideAdultContent ? { 'metadata.is_adult': { $in: [false, 0] } } : {}).sort({ _id: 1 }).limit(80).toArray();
           const section = type => ({ trending: [], shelves: [{ id: 'saved-catalog', title: 'Saved catalog', description: 'AniList is unavailable. These titles are saved in Seenary.',

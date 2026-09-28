@@ -11,6 +11,7 @@ import type {
   MediaSearchResults,
   MediaType,
   PersonDetails,
+  MediaPeoplePage,
   SeenaryBackup,
   TrackedAnimeEntry,
   TrackedMangaEntry,
@@ -68,6 +69,7 @@ type AppSettings = {
   overlayBackground: "solid" | "glass" | "transparent";
   backgroundDim: number;
   animationLevel: "full" | "reduced" | "off";
+  backgroundGlows: boolean;
   compactMode: boolean;
   discoverDensity: "comfortable" | "balanced" | "compact";
   homeDensity: "comfortable" | "balanced" | "compact";
@@ -102,11 +104,14 @@ type SyncActivityItem = {
 
 type SyncProgressEvent = {
   operation: "manual-sync" | "pull-anilist" | "pull-mal";
-  stage: "queued" | "starting" | "fetching" | "hydrating" | "mapping" | "reconciling" | "saving" | "processing" | "complete" | "failed";
+  stage: "waiting-retry" | "queued" | "starting" | "fetching" | "hydrating" | "mapping" | "reconciling" | "saving" | "processing" | "complete" | "failed";
   label: string;
   current?: number | null;
   total?: number | null;
   updatedAt?: string;
+  retryAt?: string | null;
+  retryAllowed?: boolean;
+  errorCode?: string | null;
 };
 
 declare global {
@@ -149,7 +154,7 @@ declare global {
         hideAdultContent?: boolean,
         options?: { signal?: AbortSignal }
       ) => Promise<MediaSearchResults>;
-      getDiscoverMedia: (hideAdultContent?: boolean) => Promise<DiscoverMediaResult>;
+      getDiscoverMedia: (hideAdultContent?: boolean, mediaType?: MediaType) => Promise<DiscoverMediaResult>;
       getDiscoverShelfAnime: (
         shelfId: string,
         page?: number,
@@ -464,6 +469,7 @@ declare global {
         mediaId: number;
       }) => Promise<{ ok: boolean; message: string }>;
       getAnimeDetails: (id: number) => Promise<AnimeMedia>;
+      getMediaPeople: (type: MediaType, id: number, kind: 'character' | 'staff', page?: number) => Promise<MediaPeoplePage>;
       getAnimeFranchiseStartDate: (id: number) => Promise<{
         franchiseStartDate: AnimeMedia["franchiseStartDate"];
       }>;
@@ -955,6 +961,11 @@ declare global {
           } | null;
         }) => void
       ) => () => void;
+    };
+    desktopDiagnostics?: { getInfo: () => Promise<Record<string, unknown>> };
+    desktopLibrary?: {
+      update: (state: { signedIn: boolean; watching: Array<{ id: number; type: "ANIME" | "MANGA"; title: string }>; recent: Array<{ id: number; type: "ANIME" | "MANGA"; title: string }>; continueWatching: { id: number; type: "ANIME" | "MANGA"; title: string } | null }) => void;
+      onNavigate: (callback: (action: { action: "watching" } | { action: "title"; id: number; type: "ANIME" | "MANGA" }) => void) => () => void;
     };
     desktopConfig?: {
       getLayoutOrders: (userId: number) => Promise<{

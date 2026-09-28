@@ -31,6 +31,19 @@ function getDefaultDbPath() {
 const dbPath = process.env.DATABASE_PATH || getDefaultDbPath();
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 const db = new Database(dbPath);
+db.exec(`CREATE TABLE IF NOT EXISTS anime_series_dates (
+  anime_id INTEGER PRIMARY KEY, start_date_json TEXT NOT NULL
+)`);
+function getSavedAnimeSeriesDate(id) {
+  const row = db.prepare('SELECT start_date_json FROM anime_series_dates WHERE anime_id = ?').get(id);
+  if (row) return JSON.parse(row.start_date_json);
+  const anime = getAnimeById(id);
+  if (anime?.franchise_start_resolved && anime.franchise_start_date) {
+    const [year, month, day] = anime.franchise_start_date.split('-').map(Number);
+    return { year, month, day };
+  }
+  return null;
+}
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -1784,6 +1797,8 @@ function updateAnimeFranchiseStartDate(animeId, franchiseStartDate) {
   const year = Number(franchiseStartDate?.year);
   if (!Number.isInteger(year) || year <= 0) return false;
 
+  db.prepare('INSERT OR REPLACE INTO anime_series_dates (anime_id, start_date_json) VALUES (?, ?)').run(normalizedAnimeId, JSON.stringify(franchiseStartDate));
+
   const month = String(Number(franchiseStartDate?.month) || 1).padStart(2, '0');
   const day = String(Number(franchiseStartDate?.day) || 1).padStart(2, '0');
   return updateAnimeFranchiseStartDateStmt.run(`${year}-${month}-${day}`, normalizedAnimeId).changes > 0;
@@ -2561,6 +2576,7 @@ module.exports = {
   updateAnimeAdultFlag,
   updateAnimeListMetadata,
   updateAnimeFranchiseStartDate,
+  getSavedAnimeSeriesDate,
   getAnimeById,
   getMangaById,
   getPersonDetails,

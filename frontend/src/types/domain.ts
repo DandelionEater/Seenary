@@ -19,6 +19,7 @@ export type AppSettings = {
   browseCardStyle: "default" | "immersive" | "gallery";
   backgroundDim: number;
   animationLevel: "full" | "reduced" | "off";
+  backgroundGlows: boolean;
   compactMode: boolean;
   discoverDensity: CardDensity;
   homeDensity: CardDensity;
@@ -74,6 +75,11 @@ export type PersonEdge = {
   image_large?: string | null;
   voiceActors?: Person[] | null;
   voice_actors?: string | Person[] | null;
+};
+
+export type MediaPeoplePage = {
+  id: number; type: MediaType; kind: 'character' | 'staff'; edges: PersonEdge[];
+  pageInfo: { currentPage: number; hasNextPage: boolean }; warning?: string;
 };
 
 type PersonDate = {
@@ -141,8 +147,8 @@ export type AnimeMedia = {
     }> | null;
   } | null;
   tags?: AnimeTag[] | null;
-  staff?: { edges?: PersonEdge[] | null } | null;
-  characters?: { edges?: PersonEdge[] | null } | null;
+  staff?: { edges?: PersonEdge[] | null; pageInfo?: MediaPeoplePage['pageInfo'] } | null;
+  characters?: { edges?: PersonEdge[] | null; pageInfo?: MediaPeoplePage['pageInfo'] } | null;
   relations?: { edges?: RelatedAnimeEdge[] | null } | null;
   recommendations?: { nodes?: RecommendationNode[] | null } | null;
   externalLinks?: ExternalLink[] | null;
@@ -270,6 +276,7 @@ export type DiscoverShelfResult = {
 };
 
 export type DiscoverMediaResult = {
+  cache?: { stale?: boolean; refreshing?: boolean; fallback?: string };
   anime: {
     trending: AnimeMedia[];
     shelves: DiscoverShelfResult[];

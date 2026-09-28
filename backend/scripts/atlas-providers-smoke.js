@@ -108,6 +108,15 @@ async function main() {
       $unset: { manualRequestedAt: '', leaseUntil: '' },
     });
     assert.equal((await providers.requestInboundSync(alice.token, 'anilist')).isFirstSync, false);
+    const retryAt = new Date(Date.now() + 60000);
+    await repo.providerRefreshStates.updateOne({ _id: aliceAniList._id }, {
+      $set: { lastOutcome: 'retry', lastErrorCode: 'PROVIDER_BUDGET', attempts: 2, nextAttemptAt: retryAt },
+    });
+    const retryStatus = await providers.inboundSyncStatus(alice.token, 'anilist');
+    assert.equal(retryStatus.sync.lastErrorCode, 'PROVIDER_BUDGET');
+    assert.equal(retryStatus.sync.attempts, 2);
+    assert.equal(new Date(retryStatus.sync.nextAttemptAt).getTime(), retryAt.getTime());
+    assert.equal((await providers.inboundSyncStatus(bob.token, 'anilist')).ok, false, 'another account cannot read this pull status');
 
     let release;
     pendingRefresh = new Promise((resolve) => { release = resolve; });

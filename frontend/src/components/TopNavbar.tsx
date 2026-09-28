@@ -249,10 +249,6 @@ export function TopNavbar({
         lastNavigationWasPointerRef.current = false;
       }
 
-      if (event.key === "Escape") {
-        closeAccountMenu();
-        closeNotifications();
-      }
     };
 
     window.addEventListener("blur", handleWindowBlur);
@@ -297,6 +293,7 @@ export function TopNavbar({
 
   useEffect(() => {
     function handleGlobalSearchFocus(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.key === "Delete") {
         const input = searchInputRef.current;
         const target = event.target as HTMLElement | null;
@@ -327,11 +324,7 @@ export function TopNavbar({
 
       event.preventDefault();
 
-      if (event.key === "Enter") {
-        if (input.value.trim() || resolvedSearchTerms.length) {
-          onSubmitSearch(input.value);
-        }
-      } else {
+      if (event.key !== "Enter") {
         onSearch(event.key);
       }
 
@@ -342,7 +335,7 @@ export function TopNavbar({
 
     document.addEventListener("keydown", handleGlobalSearchFocus);
     return () => document.removeEventListener("keydown", handleGlobalSearchFocus);
-  }, [focusSearchInput, hasSearch, onClear, onSearch, onSubmitSearch, resolvedSearchTerms.length]);
+  }, [focusSearchInput, hasSearch, onClear, onSearch]);
 
   return (
     <div
@@ -471,6 +464,7 @@ export function TopNavbar({
               }
               onChange={(e) => onSearch(e.target.value)}
               onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
                 const caretIsAtEnd =
                   event.currentTarget.selectionStart === event.currentTarget.value.length &&
                   event.currentTarget.selectionEnd === event.currentTarget.value.length;
@@ -491,7 +485,7 @@ export function TopNavbar({
 
                 if (
                   canCommitSearchTerm &&
-                  (event.key === "Tab" || (event.key === "ArrowRight" && caretIsAtEnd))
+                  ((event.key === "Tab" && !event.shiftKey) || (event.key === "ArrowRight" && caretIsAtEnd))
                 ) {
                   event.preventDefault();
                   onCommitSearchTerm(selectedSearchResolution);
@@ -501,6 +495,7 @@ export function TopNavbar({
                 if (event.key === "Enter") {
                   event.preventDefault();
                   onSubmitSearch(event.currentTarget.value);
+                  event.currentTarget.blur();
                 }
               }}
               onFocus={(event) => {
@@ -693,15 +688,6 @@ export function TopNavbar({
                               tabIndex={0}
                               aria-label={`Dismiss ${notification.title}`}
                               onClick={(event) => {
-                                event.stopPropagation();
-                                onDismissNotification(notification.id);
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key !== "Enter" && event.key !== " ") {
-                                  return;
-                                }
-
-                                event.preventDefault();
                                 event.stopPropagation();
                                 onDismissNotification(notification.id);
                               }}

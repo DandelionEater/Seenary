@@ -224,6 +224,7 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   browseCardStyle: "default",
   backgroundDim: 65,
   animationLevel: "full",
+  backgroundGlows: true,
   compactMode: false,
   discoverDensity: "balanced",
   homeDensity: "balanced",

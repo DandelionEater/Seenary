@@ -86,3 +86,9 @@ contextBridge.exposeInMainWorld('desktopConfig', {
 });
 
 contextBridge.exposeInMainWorld('systemLocale', getSystemLocaleInfo());
+
+contextBridge.exposeInMainWorld('desktopDiagnostics', { getInfo: () => ipcRenderer.invoke('app:diagnostics') });
+contextBridge.exposeInMainWorld('desktopLibrary', {
+  update: state => ipcRenderer.send('tray:library-state', state),
+  onNavigate: callback => { const handler = (_event, action) => callback(action); ipcRenderer.on('tray:navigate', handler); return () => ipcRenderer.removeListener('tray:navigate', handler); },
+});

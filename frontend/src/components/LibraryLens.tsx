@@ -71,19 +71,10 @@ export function LibraryLens({
         setMobileMenuOpen(false);
       }
     }
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setMediaMenuOpen(false);
-        setMobileMenuOpen(false);
-        mediaButtonRef.current?.focus();
-      }
-    }
 
     document.addEventListener("pointerdown", closeMenus);
-    document.addEventListener("keydown", closeOnEscape);
     return () => {
       document.removeEventListener("pointerdown", closeMenus);
-      document.removeEventListener("keydown", closeOnEscape);
       if (mediaMenuCloseTimerRef.current) {
         clearTimeout(mediaMenuCloseTimerRef.current);
       }

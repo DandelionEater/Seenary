@@ -5,7 +5,9 @@ const path = require('node:path');
 const backendDir = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(backendDir, '..');
 const { version } = require('../package.json');
-const releaseDir = path.join(repoRoot, 'release', version);
+const releaseDir = process.argv[2]
+  ? path.resolve(process.argv[2])
+  : path.join(repoRoot, 'release', version);
 const installerName = `Seenary-Setup-${version}.exe`;
 const installerPath = path.join(releaseDir, installerName);
 const blockmapPath = `${installerPath}.blockmap`;

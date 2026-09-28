@@ -6,6 +6,7 @@ const RETENTION = { details: 7 * DAY, mapping: 30 * DAY, search: 30 * DAY, disco
 function createCacheMaintenance({ queries, now = () => Date.now() }) {
   const protectedNow = row => new Date(row.leaseUntil || 0).getTime() > now() || new Date(row.retryAt || 0).getTime() > now();
   function safe(row) {
+    if (row.kind === 'series-start' && row.payload?.year) return false;
     if (!row.kind || !row.createdAt || !row.lastAccessAt || protectedNow(row)) return false;
     if (row.kind === 'details' && !row.canonicalizedAt) return false;
     return true;

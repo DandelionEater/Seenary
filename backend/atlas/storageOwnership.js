@@ -7,6 +7,7 @@ const TABLE_OWNERSHIP = {
   anime_tags: { domain: 'public-media', legacy: 'sqlite', cloud: 'atlas:media', cutover: 'batch-10' },
   anime_staff: { domain: 'public-media', legacy: 'sqlite', cloud: 'atlas:media', cutover: 'batch-10' },
   anime_characters: { domain: 'public-media', legacy: 'sqlite', cloud: 'atlas:media', cutover: 'batch-10' },
+  anime_series_dates: { domain: 'public-media', legacy: 'sqlite', cloud: 'atlas:media', cutover: 'batch-10' },
   person_details: { domain: 'public-media', legacy: 'sqlite', cloud: 'atlas:media', cutover: 'batch-10' },
   users: { domain: 'accounts', legacy: 'sqlite', cloud: 'atlas:users', cutover: 'batch-10' },
   web_sessions: { domain: 'sessions', legacy: 'sqlite', cloud: 'atlas:sessions', cutover: 'batch-10' },

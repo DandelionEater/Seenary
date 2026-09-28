@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut } = require('electron');
+const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const { attachWindowState, getInitialWindowOptions } = require('./windowState');
 
@@ -47,12 +47,6 @@ function createWindow() {
     childWindow.setIcon(iconPath);
   });
 
-  // DevTools shortcut (CTRL+SHIFT+I)
-  globalShortcut.register('CommandOrControl+Shift+I', () => {
-    if (win) {
-      win.webContents.toggleDevTools();
-    }
-  });
 
   return win;
 }

@@ -1,3 +1,4 @@
+import { AccentGlows } from "./ui/AccentGlows";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactNode } from "react";
 import {
@@ -414,6 +415,7 @@ const DISCOVER_GENRE_PRESETS = [
 ] as const;
 
 type DiscoverMediaCatalog = {
+  cache?: { stale?: boolean; refreshing?: boolean };
   anime: { trending: TrendingAnime[]; shelves: DiscoverShelf[] };
   manga: { trending: TrendingAnime[]; shelves: DiscoverShelf[] };
 };
@@ -426,8 +428,8 @@ type HomeAnimeCacheEntry<T> = {
 const discoverMediaCache = new Map<string, HomeAnimeCacheEntry<DiscoverMediaCatalog>>();
 const discoverMediaRequests = new Map<string, Promise<DiscoverMediaCatalog>>();
 
-function getHomeAnimeCacheKey(hideAdultContent: boolean) {
-  return hideAdultContent ? "safe" : "all";
+function getHomeAnimeCacheKey(hideAdultContent: boolean, mediaType: MediaType) {
+  return `${mediaType}:${hideAdultContent ? "safe" : "all"}`;
 }
 
 function readFreshHomeAnimeCache<T>(
@@ -1383,11 +1385,10 @@ export function HomePage({
   }
 
   function handleRetryDiscover() {
-    const cacheKey = getHomeAnimeCacheKey(hideAdultContent);
+    const cacheKey = getHomeAnimeCacheKey(hideAdultContent, mediaType);
     discoverMediaRequests.delete(cacheKey);
-    discoverMediaCache.delete(cacheKey);
-    setTrendingAnime([]);
-    setDiscoverShelves([]);
+    const saved = discoverMediaCache.get(cacheKey);
+    if (saved) saved.savedAt = 0;
     setDiscoverError(null);
     setDiscoverRetryKey((current) => current + 1);
   }
@@ -1443,32 +1444,44 @@ export function HomePage({
     });
   }, [activeDiscoverShelfId, activeHomeTab, mediaType]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let mounted = true;
-    const cacheKey = getHomeAnimeCacheKey(hideAdultContent);
+    const cacheKey = getHomeAnimeCacheKey(hideAdultContent, mediaType);
+    let refreshTimer: number | undefined;
+    let catalogShown = false;
 
     function applyCatalog(catalog: DiscoverMediaCatalog) {
       const activeCatalog = mediaType === "MANGA" ? catalog.manga : catalog.anime;
       setTrendingAnime(showTrendingCarousel ? activeCatalog.trending : []);
       setDiscoverShelves(activeCatalog.shelves);
-      setActiveTrendingIndex(0);
-      setTrendingCycleKey(0);
-      setIsTrendingPaused(false);
+      if (!catalogShown) {
+        setActiveTrendingIndex(0);
+        setTrendingCycleKey(0);
+        setIsTrendingPaused(false);
+        trendingRemainingMs.current = TRENDING_CYCLE_MS;
+      } else {
+        setActiveTrendingIndex(current => Math.min(current, Math.max(0, activeCatalog.trending.length - 1)));
+      }
+      catalogShown = true;
       setDiscoverError(null);
       setIsTrendingLoading(false);
       setIsDiscoverLoading(false);
-      trendingRemainingMs.current = TRENDING_CYCLE_MS;
     }
 
     async function loadDiscoverMedia() {
       const cached = readFreshHomeAnimeCache(discoverMediaCache, cacheKey);
-      if (cached) {
-        applyCatalog(cached);
+      const saved = discoverMediaCache.get(cacheKey)?.data;
+      if (saved) applyCatalog(saved);
+      if (cached && !cached.cache?.stale) {
         return;
       }
 
-      setIsTrendingLoading(showTrendingCarousel);
-      setIsDiscoverLoading(true);
+      if (!saved) {
+        setTrendingAnime([]);
+        setDiscoverShelves([]);
+      }
+      setIsTrendingLoading(!saved && showTrendingCarousel);
+      setIsDiscoverLoading(!saved);
       setDiscoverError(null);
 
       try {
@@ -1476,8 +1489,9 @@ export function HomePage({
 
         if (!request) {
           request = (async (): Promise<DiscoverMediaCatalog> => {
-            const result = await window.api.getDiscoverMedia(hideAdultContent);
+            const result = await window.api.getDiscoverMedia(hideAdultContent, mediaType);
             return {
+              cache: result.cache,
               anime: {
                 trending: Array.isArray(result?.anime?.trending)
                   ? (result.anime.trending as TrendingAnime[])
@@ -1504,6 +1518,12 @@ export function HomePage({
 
         if (mounted) {
           applyCatalog(data);
+          // The server returns saved results first. Check again without replacing them with skeletons.
+          if (data.cache?.refreshing) {
+            refreshTimer = window.setTimeout(() => {
+              if (mounted) void loadDiscoverMedia();
+            }, 3000);
+          }
         }
       } catch (error) {
         console.error("Failed to load Anime and Manga discovery:", error);
@@ -1539,6 +1559,7 @@ export function HomePage({
 
     return () => {
       mounted = false;
+      window.clearTimeout(refreshTimer);
     };
   }, [
     activeHomeTab,
@@ -2076,7 +2097,8 @@ export function HomePage({
       }}
       className={`scroll-container h-full overflow-y-auto px-6 pt-24 text-white ${activeHomeTab === "personal" ? "pb-8" : "pb-24"}`}
     >
-      <div className="mx-auto max-w-6xl space-y-10">
+      <div className="relative isolate mx-auto max-w-6xl space-y-10">
+          <AccentGlows seed={`${activeHomeTab}:${mediaType}`} session personal={activeHomeTab === "personal"} />
         <section className="flex flex-col gap-5 border-b border-white/10 pb-6 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="text-sm uppercase tracking-[0.24em] text-white/35">Home</p>
@@ -4113,14 +4135,7 @@ function DiscoverAnimeCard({
   return (
     <div
       role="button"
-      tabIndex={0}
       onClick={() => onSelectAnime(anime.id)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelectAnime(anime.id);
-        }
-      }}
       className={`browse-discover-card group relative overflow-hidden border border-white/10 bg-white/5 text-left transition hover:bg-white/8 focus:outline-none focus:ring-2 focus:ring-white/55 ${
         isGridCard
           ? "w-full rounded-2xl shadow-lg"

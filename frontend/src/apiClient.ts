@@ -646,8 +646,9 @@ export function installApiClient() {
         signal: options?.signal,
         timeoutMs: 30_000,
       }),
-    getDiscoverMedia: (hideAdultContent = true) =>
-      rpc("getDiscoverMedia", [hideAdultContent], { timeoutMs: 20_000 }),
+    getMediaPeople: (type, id, kind, page = 1) => rpc("getMediaPeople", [type, id, kind, page]),
+    getDiscoverMedia: (hideAdultContent = true, mediaType) =>
+      rpc("getDiscoverMedia", [hideAdultContent, mediaType], { timeoutMs: 20_000 }),
     getDiscoverShelfAnime: (shelfId, page = 1, hideAdultContent = true, mediaType = "ANIME") =>
       rpc("getDiscoverShelfAnime", [shelfId, page, hideAdultContent, mediaType], {
         timeoutMs: 20_000,

@@ -4,12 +4,16 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:franchise-library": "node scripts/franchise-library-smoke.mjs",
+    "test:detail-cache": "node scripts/detail-cache-smoke.mjs",
+    "test:watch-order": "node scripts/watch-order-smoke.mjs",
     "test:cloud-library": "node scripts/cloud-library-smoke.mjs",
     "dev:atlas": "node scripts/dev-atlas.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:desktop-improvements": "node scripts/desktop-improvements-smoke.mjs"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",

@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { providerProgress } from '../src/utils/providerProgress.ts';
+import { readLibraryView, saveLibraryView, emptyLibraryFilters } from '../src/utils/libraryViewState.ts';
+const now = Date.now();
+const waiting = providerProgress('anilist', { running: false, lastOutcome: 'retry', lastErrorStatus: 429, nextAttemptAt: new Date(now + 120000).toISOString() }, now);
+assert.equal(waiting.stage, 'waiting-retry'); assert.equal(waiting.retryAllowed, false); assert.match(waiting.label, /2 min/);
+assert.equal(providerProgress('anilist', { running: false, lastOutcome: 'retry', lastErrorStatus: 429, nextAttemptAt: new Date(now).toISOString() }, now).retryAllowed, true);
+assert.equal(providerProgress('mal', { running: true, lastOutcome: 'retry', progress: { stage: 'fetching', current: 0, total: null } }, now).stage, 'fetching', 'historical errors do not replace a live download');
+assert.equal(providerProgress('anilist', { running: false, lastOutcome: 'reauthorization-required' }).stage, 'failed');
+const saved = new Map();
+globalThis.sessionStorage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+saveLibraryView(1, 'ANIME', { filters: { ...emptyLibraryFilters, favoriteOnly: true, genreFilters: ['Drama'], listSearch: 'Fate' }, scrollTop: 900 });
+saveLibraryView(1, 'MANGA', { filters: { ...emptyLibraryFilters, formatFilter: 'MANGA' }, scrollTop: 200 });
+assert.equal(readLibraryView(1, 'ANIME').scrollTop, 900); assert.equal(readLibraryView(1, 'ANIME').filters.favoriteOnly, true);
+assert.equal(readLibraryView(1, 'MANGA').scrollTop, 200); assert.equal(readLibraryView(2, 'ANIME').filters.favoriteOnly, false);
+saveLibraryView(1, 'ANIME', { scrollTop: 0 }); assert.equal(readLibraryView(1, 'ANIME').scrollTop, 0); assert.equal(readLibraryView(1, 'ANIME').filters.listSearch, 'Fate');
+saved.set('seenary-library-view:3:ANIME', '{bad'); assert.equal(readLibraryView(3, 'ANIME').scrollTop, 0);
+console.log('PASS: download/retry/failure states, rate-limit retry protection, account/medium filter isolation and scroll restoration.');

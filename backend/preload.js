@@ -19,8 +19,9 @@ contextBridge.exposeInMainWorld('desktopExternal', {
 const legacyApi = {
   searchMedia: (query, hideAdultContent = true) =>
     ipcRenderer.invoke('anilist:search-media', { query, hideAdultContent }),
-  getDiscoverMedia: (hideAdultContent = true) =>
-    ipcRenderer.invoke('anilist:discover-media', { hideAdultContent }),
+  getMediaPeople: (type, id, kind, page = 1) => ipcRenderer.invoke('media:people', { type, id, kind, page }),
+  getDiscoverMedia: (hideAdultContent = true, mediaType) =>
+    ipcRenderer.invoke('anilist:discover-media', { hideAdultContent, mediaType }),
   getDiscoverShelfAnime: (shelfId, page = 1, hideAdultContent = true, mediaType = 'ANIME') =>
     ipcRenderer.invoke('anilist:discover-shelf', { shelfId, page, hideAdultContent, mediaType }),
   getReleaseCalendar: (start, end, hideAdultContent = true, mediaType = 'ANIME') =>
@@ -192,3 +193,9 @@ contextBridge.exposeInMainWorld('desktopConfig', {
 });
 
 contextBridge.exposeInMainWorld('systemLocale', getSystemLocaleInfo());
+
+contextBridge.exposeInMainWorld('desktopDiagnostics', { getInfo: () => ipcRenderer.invoke('app:diagnostics') });
+contextBridge.exposeInMainWorld('desktopLibrary', {
+  update: state => ipcRenderer.send('tray:library-state', state),
+  onNavigate: callback => { const handler = (_event, action) => callback(action); ipcRenderer.on('tray:navigate', handler); return () => ipcRenderer.removeListener('tray:navigate', handler); },
+});

@@ -19,15 +19,8 @@ export function StudioSearchCard({
     <div
       className="browse-search-card group relative cursor-pointer focus:outline-none focus:ring-2 focus:ring-white/60"
       role="button"
-      tabIndex={0}
       aria-label={`Open Anime ${mediaTitle}, matched by studio ${result.studio.name}`}
       onClick={() => onSelectMedia(result.media.id, result.media.type)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelectMedia(result.media.id, result.media.type);
-        }
-      }}
     >
       <div className="browse-search-poster relative aspect-2/3 overflow-hidden rounded-2xl border border-white/10 bg-white/5">
         <img

@@ -1,9 +1,12 @@
+import { providerProgress } from '../utils/providerProgress';
 import { localStore } from '../localStore';
+import { createDetailCache } from '../utils/detailCache';
 import type { AnimeMedia, AnimeThemeMusicItem, PersonDetails, SaveListEntryPayload } from '../types/domain';
 import { LibraryClient, defaults, fields } from './libraryClient';
 import type { Entry, Fields, Media, Reply, State } from './libraryClient';
 import { accountLock, browserStorage } from './browserStorage';
 import { atlasEndpoint } from './config';
+import { clearDiagnosticErrors, recordDiagnosticError } from '../utils/diagnostics';
 
 type Api = typeof window.api;
 const endpoint = atlasEndpoint;
@@ -26,6 +29,11 @@ type AccountReply = Omit<Reply, 'user'> & {
     requestedAt: string | null;
     lastSuccessAt: string | null;
     lastOutcome: string | null;
+    lastErrorCode?: string | null;
+    lastErrorStatus?: number | null;
+    lastErrorPhase?: string | null;
+    nextAttemptAt?: string | null;
+    attempts?: number;
     counts: { applied?: number; skipped?: number; review?: number } | null;
     progress?: { stage: string; current: number; total: number | null } | null;
   } | null;
@@ -40,9 +48,14 @@ export function installAtlasRenderer(legacy: Api) {
   let user: SessionUser | null = null;
   let preferenceId: number | null = null;
   let refreshNeeded = true;
+  let lastLibraryRefresh = 0;
+  let libraryRefreshPromise: Promise<State> | null = null;
+  let libraryRefreshTimer: number | null = null;
   const seenRevisions = new Map<string, number>();
   const listeners = new Set<(result: unknown) => void>();
   const progressListeners = new Set<(result: unknown) => void>();
+  const savedProgress = new Map<string, Record<string, unknown>>();
+  function emitProgress(progress: Record<string, unknown>) { savedProgress.set(String(progress.operation), progress); progressListeners.forEach(listener => listener(progress)); }
   let syncRunning = false;
   let pendingUploadTimer: number | null = null;
   let lastRequest = 0;
@@ -67,9 +80,13 @@ export function installAtlasRenderer(legacy: Api) {
   async function rpc(method: string, args: unknown[] = [], expectedUserId?: string): Promise<AccountReply> {
     const wait = Math.max(0, lastRequest + 650 - Date.now()); lastRequest = Date.now() + wait;
     await new Promise(resolve => setTimeout(resolve, wait));
-    const response = await fetch(`${endpoint}/rpc`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-Seenary-Version': __APP_VERSION__ },
+    let response: Response;
+    try { response = await fetch(`${endpoint}/rpc`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-Seenary-Version': __APP_VERSION__ },
       body: JSON.stringify({ method, args, ...(expectedUserId ? { expectedUserId } : {}) }), signal: AbortSignal.timeout(['previewAniListImport', 'previewMalImport', 'previewTextImport', 'previewPdfImport'].includes(method) ? 180000 : 30000) });
+    } catch (error) { recordDiagnosticError(method, 'TRANSPORT_FAILED'); throw error; }
     const result = await response.json();
+    if (!response.ok || result.ok === false) recordDiagnosticError(method, result.code, response.status);
+    if (method === 'getProviderSyncStatus' && result.sync?.lastOutcome === 'retry') recordDiagnosticError(`pull:${args[0]}`, result.sync.lastErrorCode, result.sync.lastErrorStatus ?? undefined, result.sync.lastErrorPhase);
     if (!response.ok) throw new Error(result.code || result.message || 'Atlas is unavailable.');
     return result;
   }
@@ -132,7 +149,11 @@ export function installAtlasRenderer(legacy: Api) {
     });
   }
   async function activate(value: SessionUser | null) {
-    if (value?.id !== user?.id) { refreshNeeded = true; seenRevisions.clear(); importPreviews.clear(); }
+    if (value?.id !== user?.id) {
+      openedDetails.clear(); refreshNeeded = true; lastLibraryRefresh = 0; libraryRefreshPromise = null;
+      if (libraryRefreshTimer !== null) window.clearTimeout(libraryRefreshTimer);
+      libraryRefreshTimer = null; savedProgress.clear(); clearDiagnosticErrors(); seenRevisions.clear(); importPreviews.clear();
+    }
     user = value;
     preferenceId = null;
     if (!value) {
@@ -165,14 +186,40 @@ export function installAtlasRenderer(legacy: Api) {
       return result;
     });
   }
-  async function load(refreshMedia = false) {
-    return operate(async client => {
-      if (refreshNeeded || refreshMedia) {
-        try { await client.refresh({ refreshMedia }); refreshNeeded = false; }
-        catch (error) { if (!(await client.read()).cursor) throw error; }
-      }
+  function refreshLibrary(refreshMedia = false): Promise<State> {
+    if (libraryRefreshPromise) return libraryRefreshPromise;
+    const accountId = user?.id;
+    const request = operate(async client => {
+      await client.refresh({ refreshMedia });
+      if (user?.id === accountId) { refreshNeeded = false; lastLibraryRefresh = Date.now(); }
       return client.read();
     });
+    libraryRefreshPromise = request;
+    void request.finally(() => { if (libraryRefreshPromise === request) libraryRefreshPromise = null; }).catch(() => {});
+    return request;
+  }
+  async function load(refreshMedia = false) {
+    const accountId = user?.id;
+    if (!accountId) throw new Error('Sign in to your Atlas account.');
+    const state = await storage.read(accountId) ?? { entries: {}, media: {}, pending: [], candidates: [] };
+    if (user?.id !== accountId) throw new Error('The active account changed.');
+    const usable = Boolean(state.cursor) && Object.values(state.entries).every(entry => entry.deleted || Boolean(state.media[entry.mediaId]));
+    if (refreshMedia || !usable) return refreshLibrary(refreshMedia);
+    if ((refreshNeeded || Date.now() - lastLibraryRefresh > 60000) && libraryRefreshTimer === null && !libraryRefreshPromise) {
+      const accountId = user?.id;
+      // Defer until parallel anime/manga reads have both returned their snapshot.
+      libraryRefreshTimer = window.setTimeout(() => {
+        libraryRefreshTimer = null;
+        if (user?.id !== accountId) return;
+        void refreshLibrary().then(() => { if (user?.id === accountId) notify(); }).catch(() => {
+          if (user?.id === accountId) {
+            lastLibraryRefresh = Date.now(); refreshNeeded = false;
+            recordDiagnosticError('library-refresh', 'LIBRARY_REFRESH_FAILED');
+          }
+        });
+      }, 0);
+    }
+    return state;
   }
   const numericId = (media: Media) => media.anilistId ?? -(media.malId!);
   const normalizedScore = (score: number | null) =>
@@ -279,21 +326,28 @@ export function installAtlasRenderer(legacy: Api) {
       });
     } catch (error) { return { ok: false, message: String(error) }; }
   }
+  const openedDetails = createDetailCache<AnimeMedia>(async key => {
+    const [type, id] = key.split(':');
+    return fetchDetails(type as Entry['type'], Number(id));
+  });
   async function details(type: Entry['type'], id: number) {
-    const state = await load();
-    const cached = Object.values(state.media).find(media => media.type === type && numericId(media) === id);
+    return openedDetails.get(`${type}:${id}`);
+  }
+  async function fetchDetails(type: Entry['type'], id: number): Promise<AnimeMedia> {
     if (Number.isSafeInteger(id) && id !== 0) {
       try {
         const result = await rpc('getMediaDetails', [type, id], user?.id) as unknown as AnimeMedia;
         if ((result?.id === id || id < 0 && result?.idMal === -id) && result?.title) return result;
       } catch { /* The cached canonical title remains usable during provider outages. */ }
     }
+    const state = await load();
+    const cached = Object.values(state.media).find(media => media.type === type && numericId(media) === id);
     if (!cached) throw new Error('Title details are unavailable. Try again when the metadata service is reachable.');
     const meta = cached.metadata;
     return { ...meta, id, type, title: { userPreferred: meta.title_preferred || meta.title_english || meta.title_romaji || `MAL #${Math.abs(id)}`, english: meta.title_english, romaji: meta.title_romaji, native: meta.title_native },
       coverImage: { large: meta.cover_image_large ?? '' }, bannerImage: meta.banner_image, seasonYear: meta.season_year,
       averageScore: meta.average_score, meanScore: meta.mean_score, isAdult: Boolean(meta.is_adult),
-      status: meta.anime_status ?? meta.manga_status, recommendations: { nodes: meta.recommendations ?? cached.sources?.anilist?.details?.recommendations?.nodes ?? [] } };
+      status: meta.anime_status ?? meta.manga_status, recommendations: { nodes: meta.recommendations ?? cached.sources?.anilist?.details?.recommendations?.nodes ?? [] } } as AnimeMedia;
   }
   async function cacheMinimal(type: Entry['type'], incoming: AnimeMedia) {
     return operate(async client => {
@@ -325,6 +379,15 @@ export function installAtlasRenderer(legacy: Api) {
   async function syncStatus() {
     const result = await rpc('getAccountSettings', [], user?.id);
     const [anilist, mal] = await Promise.all([rpc('getProviderAccount', ['anilist'], user?.id), rpc('getProviderAccount', ['mal'], user?.id)]);
+    for (const link of [anilist.account, mal.account]) {
+      if (!link) continue;
+      try {
+        const pull = await rpc('getProviderSyncStatus', [link.provider], user?.id);
+        const progress = pull.sync && providerProgress(link.provider, pull.sync);
+        if (progress) emitProgress(progress);
+        if (pull.sync?.requestedAt) { const at = Date.parse(pull.sync.requestedAt); if (Number.isFinite(at)) void watchProviderPull(link.provider, at); }
+      } catch { recordDiagnosticError('sync-status', 'SYNC_STATUS_UNAVAILABLE'); }
+    }
     const primary = anilist.account ?? mal.account;
     const labels = [anilist.account && 'AniList', mal.account && 'MyAnimeList'].filter(Boolean);
     const linkedProviders = [anilist.account?.provider, mal.account?.provider].filter(Boolean) as Array<'anilist' | 'mal'>;
@@ -336,30 +399,23 @@ export function installAtlasRenderer(legacy: Api) {
   }
   const watchedProviderPulls = new Set<string>();
   async function watchProviderPull(provider: 'anilist' | 'mal', requestedAt: number) {
-    if (watchedProviderPulls.has(provider)) return;
-    watchedProviderPulls.add(provider);
+    const accountId = user?.id;
+    if (!accountId) return;
+    const watchKey = `${accountId}:${provider}`;
+    if (watchedProviderPulls.has(watchKey)) return;
+    watchedProviderPulls.add(watchKey);
     const operation = provider === 'anilist' ? 'pull-anilist' : 'pull-mal';
     try {
-      progressListeners.forEach(listener => listener({ operation, stage: 'fetching', label: `Updating from ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'}…`, current: 0, total: null }));
-      const deadline = Date.now() + 10 * 60000;
-      while (Date.now() < deadline) {
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        const status = await rpc('getProviderSyncStatus', [provider], user?.id);
-        const remoteProgress = status.sync?.progress;
-        if (remoteProgress) {
-          const providerLabel = provider === 'anilist' ? 'AniList' : 'MyAnimeList';
-          const labels: Record<string, string> = {
-            queued: `Waiting for the ${providerLabel} worker…`,
-            starting: `Starting ${providerLabel} update…`,
-            fetching: `Downloading Anime and Manga lists from ${providerLabel}…`,
-            hydrating: `Saving ${providerLabel} titles and artwork…`,
-            mapping: `Matching MyAnimeList titles to Seenary…`,
-            reconciling: `Reconciling ${providerLabel} library…`,
-          };
-          progressListeners.forEach(listener => listener({ operation, stage: remoteProgress.stage,
-            label: labels[remoteProgress.stage] || `Updating from ${providerLabel}…`,
-            current: remoteProgress.current, total: remoteProgress.total }));
-        }
+      let pollInterval = 3000;
+      while (user?.id === accountId) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        if (user?.id !== accountId) return;
+        const status = await rpc('getProviderSyncStatus', [provider], accountId);
+        if (user?.id !== accountId) return;
+        const progress = status.sync && providerProgress(provider, status.sync);
+        if (progress) emitProgress(progress);
+        const nextAttempt = Date.parse(String(status.sync?.nextAttemptAt || ''));
+        pollInterval = status.sync?.running ? 3000 : Number.isFinite(nextAttempt) ? Math.max(3000, Math.min(30000, nextAttempt - Date.now())) : 5000;
         const completedAt = Date.parse(String(status.sync?.lastSuccessAt || ''));
         if (Number.isFinite(completedAt) && completedAt >= requestedAt) {
           refreshNeeded = true;
@@ -369,19 +425,18 @@ export function installAtlasRenderer(legacy: Api) {
           notify({ ok: true, provider: label,
             message: `${label} update complete. ${counts?.applied ?? 0} entries were added or updated; ${counts?.skipped ?? 0} were already current.` });
           const total = (counts?.applied ?? 0) + (counts?.skipped ?? 0);
-          progressListeners.forEach(listener => listener({ operation, stage: 'complete', label: `${label} update complete.`, current: total, total }));
+          emitProgress({ operation, stage: 'complete', label: `${label} update complete.`, current: total, total });
           return;
         }
         if (status.sync?.lastOutcome === 'reauthorization-required') {
-          progressListeners.forEach(listener => listener({ operation, stage: 'failed', label: 'Provider authorization must be renewed.' }));
+          emitProgress({ operation, stage: 'failed', label: 'Provider authorization must be renewed.' });
           return;
         }
       }
-      progressListeners.forEach(listener => listener({ operation, stage: 'failed', label: 'The update is still running, but live progress timed out.' }));
     } catch {
-      progressListeners.forEach(listener => listener({ operation, stage: 'failed', label: 'Live update progress is temporarily unavailable.' }));
+      if (user?.id === accountId) emitProgress({ operation, stage: 'failed', label: 'Could not check the update. Your library is preserved; retry when connected.' });
     }
-    finally { watchedProviderPulls.delete(provider); }
+    finally { watchedProviderPulls.delete(watchKey); }
   }
   async function pullProvider(provider: 'anilist' | 'mal') {
     const queued = await rpc('requestProviderSync', [provider], user?.id);
@@ -491,10 +546,11 @@ export function installAtlasRenderer(legacy: Api) {
     resolveMyListConflict: (id: number, choice: 'cloud' | 'device') => resolveConflict('ANIME', id, choice),
     resolveMyMangaListConflict: (id: number, choice: 'cloud' | 'device') => resolveConflict('MANGA', id, choice),
     clearMyList: (options?: { queueProviderDeletion?: boolean }) => clear('ANIME', options), clearMyMangaList: (options?: { queueProviderDeletion?: boolean }) => clear('MANGA', options), clearAllMediaLists: (options?: { queueProviderDeletion?: boolean }) => clear(undefined, options),
+    getMediaPeople: (type: Entry['type'], id: number, kind: 'character' | 'staff', page = 1) => rpc('getMediaPeople', [type, id, kind, page], user?.id),
     getAnimeDetails: (id: number) => details('ANIME', id), getMediaDetails: (type: Entry['type'], id: number) => details(type, id),
     getAnimeFranchiseStartDate: (id: number) => rpc('getAnimeFranchiseStartDate', [id], user?.id),
     searchMedia: (text: string, hideAdultContent = true) => rpc('searchMedia', [text, hideAdultContent], user?.id),
-    getDiscoverMedia: (hideAdultContent = true) => rpc('getDiscoverMedia', [hideAdultContent], user?.id),
+    getDiscoverMedia: (hideAdultContent = true, mediaType?: Entry['type']) => rpc('getDiscoverMedia', [hideAdultContent, mediaType], user?.id),
     getDiscoverShelfAnime: (shelfId: string, page = 1, hideAdultContent = true, mediaType = 'ANIME') => rpc('getDiscoverShelfAnime', [shelfId, page, hideAdultContent, mediaType], user?.id),
     getReleaseCalendar: (start: number, end: number, hideAdultContent = true, mediaType = 'ANIME') => rpc('getReleaseCalendar', [start, end, hideAdultContent, mediaType], user?.id),
     getStudioMedia: (id: number, page = 1, hideAdultContent = true) => rpc('getStudioMedia', [id, page, hideAdultContent], user?.id),
@@ -533,7 +589,7 @@ export function installAtlasRenderer(legacy: Api) {
     pullFromAniList: () => pullProvider('anilist'),
     pullFromMal: () => pullProvider('mal'),
     onAutoSyncComplete: (callback: (result: unknown) => void) => { listeners.add(callback); return () => listeners.delete(callback); },
-    onSyncProgress: (callback: (result: unknown) => void) => { progressListeners.add(callback); return () => progressListeners.delete(callback); },
+    onSyncProgress: (callback: (result: unknown) => void) => { progressListeners.add(callback); const timer = window.setTimeout(() => { for (const progress of savedProgress.values()) if (progressListeners.has(callback)) callback(progress); }, 0); return () => { window.clearTimeout(timer); progressListeners.delete(callback); }; },
     getSyncActivity: () => rpc('getSyncActivity', [], user?.id),
     excludeSyncEntry: (payload: { id?: string | number }) => rpc('excludeSyncEntry', [payload], user?.id),
     restoreSyncExclusion: (payload: { id?: string | number }) => rpc('restoreSyncExclusion', [payload], user?.id),
@@ -589,7 +645,7 @@ export function installAtlasRenderer(legacy: Api) {
       });
       const desktopResult = window.desktopMaintenance ? await window.desktopMaintenance.repairCaches() : { ok: true, clearedWebCache: false };
       if (!desktopResult.ok) return { ok: false, message: desktopResult.message || 'Seenary could not clear the desktop web cache.', removedDetails: removedMedia, removedMedia };
-      refreshNeeded = true; notify();
+      openedDetails.clear(); refreshNeeded = true; notify();
       return { ok: true, message: 'Cached title data was rebuilt from Atlas. Your library, pending edits, import review, and settings were preserved.',
         removedDetails: removedMedia, removedMedia, clearedWebCache: desktopResult.clearedWebCache, restartRecommended: true };
     },

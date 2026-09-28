@@ -1,3 +1,6 @@
+import { AccentGlows } from "./ui/AccentGlows";
+import { readLibraryView, saveLibraryView, emptyLibraryFilters, type LibraryFilters } from '../utils/libraryViewState';
+import { DEFAULT_STATUS_ORDER, normalizeSectionOrder, readStoredSectionOrder } from '../utils/listSectionOrder';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactNode } from "react";
 import {
@@ -92,6 +95,8 @@ type MyListPageProps = {
   onLibraryDestinationChange: (destination: LibraryDestination) => void;
   onLibraryLensVisibilityChange: (isVisible: boolean) => void;
   initialScrollTop: number;
+  requestedStatus?: { status: "watching"; requestId: number } | null;
+  onRequestedStatusHandled?: () => void;
   onScrollContainerChange: (element: HTMLDivElement | null) => void;
   onScrollPositionChange: (scrollTop: number) => void;
 };
@@ -104,13 +109,6 @@ type RatingFilter = "all" | "rated" | "unrated" | "excellent" | "good" | "mixed"
 type ActivityFilter = "all" | "today" | "7d" | "30d" | "year";
 type OpenFilter = "rating" | "format" | "genres" | "tags" | "release" | "activity" | "length" | null;
 
-const DEFAULT_STATUS_ORDER: ListStatus[] = [
-  "watching",
-  "planned",
-  "completed",
-  "paused",
-  "dropped",
-];
 
 const STATUS_META: Record<
   ListStatus,
@@ -257,27 +255,6 @@ function readStoredSortMode(mediaType: MediaType = "ANIME"): SortMode {
   }
 }
 
-function readStoredSectionOrder(mediaType: MediaType = "ANIME") {
-  if (typeof window === "undefined") {
-    return [...DEFAULT_STATUS_ORDER];
-  }
-
-  try {
-    const rawValue = getMigratedLocalStorageItem(
-      getMediaPreferenceKey(MY_LIST_SECTION_ORDER_KEY, mediaType),
-      getMediaPreferenceKey(MY_LIST_SECTION_ORDER_LEGACY_KEY, mediaType)
-    );
-
-    if (!rawValue) {
-      return [...DEFAULT_STATUS_ORDER];
-    }
-
-    return normalizeSectionOrder(JSON.parse(rawValue));
-  } catch {
-    return [...DEFAULT_STATUS_ORDER];
-  }
-}
-
 function persistSectionOrder(order: ListStatus[], mediaType: MediaType = "ANIME") {
   try {
     window.localStorage.setItem(
@@ -290,20 +267,6 @@ function persistSectionOrder(order: ListStatus[], mediaType: MediaType = "ANIME"
   } catch {
     // Ignore local persistence failures and keep the UI usable.
   }
-}
-
-function normalizeSectionOrder(value: unknown): ListStatus[] {
-  const allowedStatuses = new Set<ListStatus>(DEFAULT_STATUS_ORDER);
-  const savedStatuses = Array.isArray(value)
-    ? value.filter((status): status is ListStatus =>
-        allowedStatuses.has(status as ListStatus)
-      )
-    : [];
-  const missingStatuses = DEFAULT_STATUS_ORDER.filter(
-    (status) => !savedStatuses.includes(status)
-  );
-
-  return [...savedStatuses, ...missingStatuses];
 }
 
 function isListStatus(value: string): value is ListStatus {
@@ -354,14 +317,16 @@ export function MyListPage({
   onMediaTypeChange,
   onLibraryDestinationChange,
   onLibraryLensVisibilityChange,
-  initialScrollTop,
+  requestedStatus,
+  onRequestedStatusHandled,
   onScrollContainerChange,
   onScrollPositionChange,
 }: MyListPageProps) {
   const entries: MyListEntry[] =
     activeMediaType === "MANGA" ? mangaEntries : animeEntries;
+  const savedView = useMemo(() => readLibraryView(userId, activeMediaType), [userId, activeMediaType]);
   const [editingEntry, setEditingEntry] = useState<MyListEntry | null>(null);
-  const [listSearch, setListSearch] = useState("");
+  const [listSearch, setListSearch] = useState(savedView.filters.listSearch);
   const [openSections, setOpenSections] = useState(() =>
     readStoredOpenSections(activeMediaType)
   );
@@ -375,23 +340,23 @@ export function MyListPage({
   const [isEditingSectionOrder, setIsEditingSectionOrder] = useState(false);
   const [draggedSectionStatus, setDraggedSectionStatus] = useState<ListStatus | null>(null);
   const [view, setView] = useState<MyListView>(() => readStoredView(activeMediaType));
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [ratingFilter, setRatingFilter] = useState<RatingFilter>("all");
-  const [formatFilter, setFormatFilter] = useState("all");
-  const [genreFilters, setGenreFilters] = useState<string[]>([]);
-  const [tagFilters, setTagFilters] = useState<string[]>([]);
-  const [releaseFromYear, setReleaseFromYear] = useState("");
-  const [releaseToYear, setReleaseToYear] = useState("");
-  const [releaseSeason, setReleaseSeason] = useState("all");
-  const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
-  const [minimumLength, setMinimumLength] = useState("");
-  const [maximumLength, setMaximumLength] = useState("");
-  const [favoriteOnly, setFavoriteOnly] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(savedView.filters.filtersOpen);
+  const [ratingFilter, setRatingFilter] = useState<RatingFilter>(savedView.filters.ratingFilter);
+  const [formatFilter, setFormatFilter] = useState(savedView.filters.formatFilter);
+  const [genreFilters, setGenreFilters] = useState<string[]>(savedView.filters.genreFilters);
+  const [tagFilters, setTagFilters] = useState<string[]>(savedView.filters.tagFilters);
+  const [releaseFromYear, setReleaseFromYear] = useState(savedView.filters.releaseFromYear);
+  const [releaseToYear, setReleaseToYear] = useState(savedView.filters.releaseToYear);
+  const [releaseSeason, setReleaseSeason] = useState(savedView.filters.releaseSeason);
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>(savedView.filters.activityFilter);
+  const [minimumLength, setMinimumLength] = useState(savedView.filters.minimumLength);
+  const [maximumLength, setMaximumLength] = useState(savedView.filters.maximumLength);
+  const [favoriteOnly, setFavoriteOnly] = useState(savedView.filters.favoriteOnly);
   const [openFilter, setOpenFilter] = useState<OpenFilter>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const openSectionsBeforeEdit = useRef<Record<ListStatus, boolean> | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const initialScrollTopOnMount = useRef(initialScrollTop);
+  const initialScrollTopOnMount = useRef(requestedStatus ? 0 : savedView.scrollTop);
   const isRestoringScroll = useRef(false);
   const restoringScrollTarget = useRef(0);
 
@@ -407,6 +372,30 @@ export function MyListPage({
     [activeMediaType, onSelectMedia]
   );
 
+  function applyFilters(filters: LibraryFilters) {
+    setListSearch(filters.listSearch);
+    setFiltersOpen(filters.filtersOpen);
+    setRatingFilter(filters.ratingFilter);
+    setFormatFilter(filters.formatFilter);
+    setGenreFilters(filters.genreFilters);
+    setTagFilters(filters.tagFilters);
+    setReleaseFromYear(filters.releaseFromYear);
+    setReleaseToYear(filters.releaseToYear);
+    setReleaseSeason(filters.releaseSeason);
+    setActivityFilter(filters.activityFilter);
+    setMinimumLength(filters.minimumLength);
+    setMaximumLength(filters.maximumLength);
+    setFavoriteOnly(filters.favoriteOnly);
+  }
+  useEffect(() => { saveLibraryView(userId, activeMediaType, { filters: { listSearch, filtersOpen, ratingFilter, formatFilter, genreFilters, tagFilters, releaseFromYear, releaseToYear, releaseSeason, activityFilter, minimumLength, maximumLength, favoriteOnly } }); }, [userId, activeMediaType, listSearch, filtersOpen, ratingFilter, formatFilter, genreFilters, tagFilters, releaseFromYear, releaseToYear, releaseSeason, activityFilter, minimumLength, maximumLength, favoriteOnly]);
+  useEffect(() => {
+    if (!requestedStatus) return;
+    applyFilters(emptyLibraryFilters);
+    setOpenSections({ watching: true, planned: false, completed: false, paused: false, dropped: false });
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+    onRequestedStatusHandled?.();
+  }, [requestedStatus, onRequestedStatusHandled]);
+
   function handleMediaTypeChange(mediaType: MediaType) {
     if (mediaType === activeMediaType) return;
 
@@ -419,18 +408,7 @@ export function MyListPage({
     setIsEditingSectionOrder(false);
     setEditingEntry(null);
     onMediaTypeChange(mediaType);
-    setListSearch("");
-    setRatingFilter("all");
-    setFormatFilter("all");
-    setGenreFilters([]);
-    setTagFilters([]);
-    setReleaseFromYear("");
-    setReleaseToYear("");
-    setReleaseSeason("all");
-    setActivityFilter("all");
-    setMinimumLength("");
-    setMaximumLength("");
-    setFavoriteOnly(false);
+    applyFilters(readLibraryView(userId, mediaType).filters);
     setOpenFilter(null);
   }
 
@@ -463,6 +441,7 @@ export function MyListPage({
       if (isAtTarget || targetScrollTop <= 0 || attempts >= 40) {
         isRestoringScroll.current = false;
         onScrollPositionChange(container.scrollTop);
+        saveLibraryView(userId, activeMediaType, { scrollTop: container.scrollTop });
         return;
       }
 
@@ -480,7 +459,7 @@ export function MyListPage({
       window.clearTimeout(timeout);
       isRestoringScroll.current = false;
     };
-  }, [onScrollPositionChange]);
+  }, [onScrollPositionChange, activeMediaType, userId]);
 
   useEffect(() => {
     if (!window.desktopConfig) return;
@@ -761,6 +740,7 @@ export function MyListPage({
         data-global-scroll-root
         ref={rememberScrollContainer}
         onScroll={(event) => {
+          if (!isRestoringScroll.current) saveLibraryView(userId, activeMediaType, { scrollTop: event.currentTarget.scrollTop });
           const scrollTop = event.currentTarget.scrollTop;
 
           if (isRestoringScroll.current && scrollTop < restoringScrollTarget.current) {
@@ -771,7 +751,8 @@ export function MyListPage({
         }}
         className="scroll-container h-full overflow-y-auto px-6 py-24"
       >
-        <div className="mx-auto max-w-6xl space-y-10">
+        <div className="relative isolate mx-auto max-w-6xl space-y-10">
+          <AccentGlows seed={`list:${activeMediaType}`} session />
           <section className="flex flex-col gap-5 border-b border-white/10 pb-6 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-sm uppercase tracking-[0.24em] text-white/35">
@@ -1273,15 +1254,10 @@ function FilterSelect({
       if (!containerRef.current?.contains(event.target as Node)) onOpenChange(false);
     }
 
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onOpenChange(false);
-    }
 
     document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open, onOpenChange]);
 
@@ -1413,14 +1389,9 @@ function ReleasePeriodFilter({
     function handlePointerDown(event: PointerEvent) {
       if (!containerRef.current?.contains(event.target as Node)) onOpenChange(false);
     }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onOpenChange(false);
-    }
     document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open, onOpenChange]);
 
@@ -1595,14 +1566,9 @@ function NumericRangeFilter({
     function handlePointerDown(event: PointerEvent) {
       if (!containerRef.current?.contains(event.target as Node)) onOpenChange(false);
     }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onOpenChange(false);
-    }
     document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open, onOpenChange]);
 
@@ -1701,15 +1667,10 @@ function MultiSelectFilter({
       if (!containerRef.current?.contains(event.target as Node)) onOpenChange(false);
     }
 
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onOpenChange(false);
-    }
 
     document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open, onOpenChange]);
 

@@ -457,21 +457,26 @@ async function searchMangaBatch(searches, options = {}) {
 
 async function getDiscoverMedia(options = {}) {
   const hideAdultContent = options.hideAdultContent !== false;
+  const mediaType = options.mediaType;
+  const includeAnime = mediaType !== 'MANGA';
+  const includeManga = mediaType !== 'ANIME';
   const { currentSeason, currentYear, nextSeason, nextYear } = getSeasonWindows();
   const query = `
     query (
       $isAdult: Boolean,
+      $includeAnime: Boolean!,
+      $includeManga: Boolean!,
       $currentSeason: MediaSeason,
       $currentYear: Int,
       $nextSeason: MediaSeason,
       $nextYear: Int
     ) {
-      trendingAnime: Page(page: 1, perPage: 8) {
+      trendingAnime: Page(page: 1, perPage: 8) @include(if: $includeAnime) {
         media(type: ANIME, status: RELEASING, sort: TRENDING_DESC, isAdult: $isAdult) {
           ...DiscoverMedia
         }
       }
-      seasonal: Page(page: 1, perPage: 10) {
+      seasonal: Page(page: 1, perPage: 10) @include(if: $includeAnime) {
         media(
           type: ANIME,
           season: $currentSeason,
@@ -482,7 +487,7 @@ async function getDiscoverMedia(options = {}) {
           ...DiscoverMedia
         }
       }
-      upcoming: Page(page: 1, perPage: 10) {
+      upcoming: Page(page: 1, perPage: 10) @include(if: $includeAnime) {
         media(
           type: ANIME,
           season: $nextSeason,
@@ -493,37 +498,37 @@ async function getDiscoverMedia(options = {}) {
           ...DiscoverMedia
         }
       }
-      popular: Page(page: 1, perPage: 10) {
+      popular: Page(page: 1, perPage: 10) @include(if: $includeAnime) {
         media(type: ANIME, sort: POPULARITY_DESC, isAdult: $isAdult) {
           ...DiscoverMedia
         }
       }
-      highlyRated: Page(page: 1, perPage: 10) {
+      highlyRated: Page(page: 1, perPage: 10) @include(if: $includeAnime) {
         media(type: ANIME, sort: SCORE_DESC, isAdult: $isAdult) {
           ...DiscoverMedia
         }
       }
-      trendingManga: Page(page: 1, perPage: 8) {
+      trendingManga: Page(page: 1, perPage: 8) @include(if: $includeManga) {
         media(type: MANGA, status: RELEASING, sort: TRENDING_DESC, isAdult: $isAdult) {
           ...DiscoverMedia
         }
       }
-      publishingManga: Page(page: 1, perPage: 10) {
+      publishingManga: Page(page: 1, perPage: 10) @include(if: $includeManga) {
         media(type: MANGA, status: RELEASING, sort: TRENDING_DESC, isAdult: $isAdult) {
           ...DiscoverMedia
         }
       }
-      newManga: Page(page: 1, perPage: 10) {
+      newManga: Page(page: 1, perPage: 10) @include(if: $includeManga) {
         media(type: MANGA, sort: START_DATE_DESC, isAdult: $isAdult) {
           ...DiscoverMedia
         }
       }
-      popularManga: Page(page: 1, perPage: 10) {
+      popularManga: Page(page: 1, perPage: 10) @include(if: $includeManga) {
         media(type: MANGA, sort: POPULARITY_DESC, isAdult: $isAdult) {
           ...DiscoverMedia
         }
       }
-      highlyRatedManga: Page(page: 1, perPage: 10) {
+      highlyRatedManga: Page(page: 1, perPage: 10) @include(if: $includeManga) {
         media(type: MANGA, sort: SCORE_DESC, isAdult: $isAdult) {
           ...DiscoverMedia
         }
@@ -563,6 +568,7 @@ async function getDiscoverMedia(options = {}) {
 
   const data = await anilistRequestWithRetry(query, {
     isAdult: hideAdultContent ? false : undefined,
+    includeAnime, includeManga,
     currentSeason,
     currentYear,
     nextSeason,
@@ -570,7 +576,7 @@ async function getDiscoverMedia(options = {}) {
   });
 
   return {
-    anime: {
+    anime: !includeAnime ? { trending: [], shelves: [] } : {
       trending: data.data.trendingAnime.media,
       shelves: [
         {
@@ -603,7 +609,7 @@ async function getDiscoverMedia(options = {}) {
         },
       ],
     },
-    manga: {
+    manga: !includeManga ? { trending: [], shelves: [] } : {
       trending: data.data.trendingManga.media,
       shelves: [
         {
@@ -1276,6 +1282,7 @@ async function getAnimeDetails(id, options = {}) {
         studios { nodes { id name isAnimationStudio } }
         tags { id name description rank isMediaSpoiler isGeneralSpoiler }
         characters(perPage: 20) {
+          pageInfo { currentPage hasNextPage }
           edges {
             role
             node { id name { full native userPreferred } image { large } }
@@ -1288,6 +1295,7 @@ async function getAnimeDetails(id, options = {}) {
           }
         }
         staff(perPage: 20) {
+          pageInfo { currentPage hasNextPage }
           edges {
             role
             node { id name { full native userPreferred } image { large } }
@@ -1390,12 +1398,14 @@ async function fetchMangaDetails({ id = null, idMal = null } = {}) {
         synonyms
         tags { id name description rank isMediaSpoiler isGeneralSpoiler }
         characters(perPage: 20) {
+          pageInfo { currentPage hasNextPage }
           edges {
             role
             node { id name { full native userPreferred } image { large } }
           }
         }
         staff(perPage: 20) {
+          pageInfo { currentPage hasNextPage }
           edges {
             role
             node { id name { full native userPreferred } image { large } }
@@ -1600,75 +1610,19 @@ async function getAnimeAdultFlags(animeIds) {
   return await getAnimeListMetadata(animeIds);
 }
 
-async function findAnimeSeriesStartDate(media) {
-  let earliestDate = media?.startDate ?? null;
-  let frontier = (media?.relations?.edges ?? [])
-    .filter((edge) => edge?.relationType === 'PREQUEL' && edge?.node?.id)
-    .map((edge) => edge.node);
-  const visited = new Set([Number(media?.id)]);
-
-  for (let depth = 0; depth < 10 && frontier.length > 0; depth += 1) {
-    const ids = [];
-
-    for (const node of frontier) {
-      earliestDate = getEarlierFuzzyDate(earliestDate, node?.startDate);
-      const nodeId = Number(node?.id);
-
-      if (Number.isInteger(nodeId) && nodeId > 0 && !visited.has(nodeId)) {
-        visited.add(nodeId);
-        ids.push(nodeId);
-      }
-    }
-
-    if (!ids.length) break;
-
-    const query = `
-        query ($ids: [Int]) {
-          Page(page: 1, perPage: 25) {
-            media(id_in: $ids, type: ANIME) {
-              id
-              startDate { year month day }
-              relations {
-                edges {
-                  relationType
-                  node {
-                    id
-                    format
-                    startDate { year month day }
-                  }
-                }
-              }
-            }
-          }
+async function findAnimeSeriesStartDate(media, options = {}) {
+  return require('./seriesStartDate').resolveSeriesStartDate(media, {
+    ...options,
+    fetchMedia: async (id) => {
+      const data = await anilistRequestWithRetry(`query ($id: Int) {
+        Media(id: $id, type: ANIME) {
+          id startDate { year month day }
+          relations { edges { relationType node { id startDate { year month day } } } }
         }
-    `;
-    const data = await anilistRequestWithRetry(query, { ids });
-    const entries = data?.data?.Page?.media ?? [];
-
-    frontier = [];
-    for (const entry of entries) {
-      earliestDate = getEarlierFuzzyDate(earliestDate, entry?.startDate);
-      frontier.push(
-        ...(entry?.relations?.edges ?? [])
-          .filter((edge) => edge?.relationType === 'PREQUEL' && edge?.node?.id)
-          .map((edge) => edge.node)
-      );
-    }
-  }
-
-  return earliestDate;
-}
-
-function getEarlierFuzzyDate(current, candidate) {
-  if (!candidate?.year) return current ?? null;
-  if (!current?.year) return candidate;
-
-  const currentValue =
-    current.year * 10_000 + Number(current.month || 1) * 100 + Number(current.day || 1);
-  const candidateValue =
-    candidate.year * 10_000 + Number(candidate.month || 1) * 100 + Number(candidate.day || 1);
-
-  return candidateValue < currentValue ? candidate : current;
+      }`, { id });
+      return data?.data?.Media;
+    },
+  });
 }
 
 async function getCharacterDetails(id) {
@@ -1860,7 +1814,27 @@ async function deleteMediaListEntry(accessToken, payload) {
   return data.data.DeleteMediaListEntry;
 }
 
+async function getMediaPeople(type, id, kind, page = 1) {
+  if (!['ANIME', 'MANGA'].includes(type) || !['character', 'staff'].includes(kind)
+      || !Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(page) || page < 1) throw new Error('Invalid people request.');
+  const connection = kind === 'character' ? 'characters' : 'staff';
+  const voices = kind === 'character' && type === 'ANIME'
+    ? 'voiceActors(language: JAPANESE) { id name { full native userPreferred } language image { large } }' : '';
+  const result = await anilistRequestWithRetry(`query ($id: Int, $type: MediaType, $page: Int) {
+    Media(id: $id, type: $type) {
+      id
+      ${connection}(page: $page, perPage: 20) {
+        pageInfo { currentPage hasNextPage }
+        edges { role node { id name { full native userPreferred } image { large } } ${voices} }
+      }
+    }
+  }`, { id, type, page });
+  if (result?.data?.Media?.id !== id) throw new Error('Wrong media returned for people request.');
+  return { id, type, kind, ...result.data.Media[connection] };
+}
+
 module.exports = {
+  getMediaPeople,
   searchMedia,
   getStudioMedia,
   searchAnime,

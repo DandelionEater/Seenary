@@ -137,13 +137,21 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
           ...(manual ? { $unset: { manualRequestedAt: '' } } : {}) });
         return { status: 'skipped' };
       }
+      let phase = 'authorization';
       try {
         await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
           { $set: { progress: { stage: 'fetching', current: 0, total: null, updatedAt: new Date(now()) } } });
         const access = await token(link); link = await repo.providerAccounts.findOne({ _id: link._id });
         const all = [];
-        for (const type of ['ANIME', 'MANGA']) { await reserve(link.provider); all.push(...normalize(link.provider, type, await adapters.pull(link.provider, access, type, link.providerUserId))); }
+        for (const type of ['ANIME', 'MANGA']) {
+          phase = type === 'ANIME' ? 'fetch-anime' : 'fetch-manga';
+          await reserve(link.provider);
+          const payload = await adapters.pull(link.provider, access, type, link.providerUserId);
+          phase = type === 'ANIME' ? 'normalize-anime' : 'normalize-manga';
+          all.push(...normalize(link.provider, type, payload));
+        }
         if (link.provider === 'anilist' && metadata.anilist) {
+          phase = 'hydrate';
           await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
             { $set: { progress: { stage: 'hydrating', current: 0, total: all.length, updatedAt: new Date(now()) } } });
           for (let index = 0; index < all.length; index++) {
@@ -153,6 +161,7 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
           }
         }
         if (link.provider === 'mal') {
+          phase = 'mapping';
           let mapped = 0;
           await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
             { $set: { progress: { stage: 'mapping', current: 0, total: all.length, updatedAt: new Date(now()) } } });
@@ -172,6 +181,7 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
             }
           }
         }
+        phase = 'reconcile';
         const providerKey = link.provider === 'anilist' ? 'anilistId' : 'malId';
         const mediaRows = all.length ? await repo.media.find({ $or: all.map(item => ({ type: item.type, [providerKey]: item.providerId })) }).toArray() : [];
         const mediaByProvider = new Map(mediaRows.map(document => [`${document.type}:${document[providerKey]}`, document]));
@@ -208,13 +218,17 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
               { $set: { progress: { stage: 'reconciling', current: index + 1, total: pending.length, updatedAt: new Date(now()) } } });
           }
         }
+        phase = 'finish';
         await finish(claim, { $set: { linkRevision: link.revision, nextAttemptAt: new Date(now() + intervalMs), lastSuccessAt: new Date(now()),
-          lastOutcome: 'success', lastCounts: counts, attempts: 0 }, $unset: { progress: '', ...(manual ? { manualRequestedAt: '' } : {}) } });
+          lastOutcome: 'success', lastCounts: counts, attempts: 0 }, $unset: { progress: '', lastErrorCode: '', lastErrorStatus: '', lastErrorPhase: '', ...(manual ? { manualRequestedAt: '' } : {}) } });
         return { status: 'succeeded', counts };
       } catch (error) {
+        const status = Number(error.status);
+        const httpStatus = Number.isInteger(status) && status >= 400 && status <= 599 ? status : null;
         const attempts = (state.attempts || 0) + 1; const retry = error.retryAfter ? error.retryAfter * 1000 : Math.min(30000 * 2 ** (attempts - 1), 6 * 3600000);
         await finish(claim, { $set: { attempts, nextAttemptAt: new Date(now() + retry), lastOutcome: error.terminal ? 'reauthorization-required' : 'retry',
-          lastErrorCode: /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code || '') ? error.code : 'PROVIDER_UNAVAILABLE' }, $unset: { progress: '' } });
+          lastErrorCode: /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code || '') ? error.code : httpStatus ? `PROVIDER_HTTP_${httpStatus}` : 'PROVIDER_UNAVAILABLE',
+          lastErrorStatus: httpStatus, lastErrorPhase: phase }, $unset: { progress: '' } });
         return { status: error.terminal ? 'failed' : 'retry' };
       }
     },
