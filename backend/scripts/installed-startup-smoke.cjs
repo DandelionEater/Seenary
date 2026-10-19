@@ -62,7 +62,7 @@ async function launch(label) {
         const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
         const page = targets.find(target => target.type === 'page' && target.url.startsWith('https://web.seenary.app'));
         if (page) report = await evaluate(page.webSocketDebuggerUrl, `(async () => {
-          if (!window.desktopDiagnostics || !document.getElementById('root')?.children.length) return null;
+          if (!window.desktopDiagnostics || !document.getElementById('root')?.children.length || document.body.innerText.length <= 20) return null;
           const diagnostics = await window.desktopDiagnostics.getInfo();
           return { packaged: diagnostics.packaged, writable: diagnostics.profileWritable, version: diagnostics.appVersion, text: document.body.innerText.length, notifications: typeof window.desktopReleaseNotifications };
         })()`);
