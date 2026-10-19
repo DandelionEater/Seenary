@@ -460,7 +460,7 @@ export function TopNavbar({
               placeholder={
                 resolvedSearchTerms.length
                   ? "Add another..."
-                  : "Search titles, characters, studios, or music..."
+                  : "Search titles, genres, tags, characters, studios, or music..."
               }
               onChange={(e) => onSearch(e.target.value)}
               onKeyDown={(event) => {
@@ -793,6 +793,8 @@ function getSearchMatchTypeLabel(matchType: SearchMatchType) {
   if (matchType === "CHARACTER") return "Character";
   if (matchType === "STUDIO") return "Studio";
   if (matchType === "ARTIST") return "Artist";
+  if (matchType === "GENRE") return "Genre";
+  if (matchType === "TAG") return "Tag";
   return "Song";
 }
 

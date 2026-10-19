@@ -132,6 +132,7 @@ app.whenReady().then(async () => {
   registerStartupIpc();
   registerWindowStateIpc(() => mainWindow);
   registerLayoutConfigIpc();
+  require('./releaseNotifications').registerReleaseNotificationIpc(() => mainWindow);
   setupAutoUpdates(win);
 
   app.on('activate', () => {

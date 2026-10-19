@@ -21,6 +21,7 @@ async function main() {
       trustProxy: process.env.TRUST_PROXY === 'true', requestLimit: Number(process.env.RPC_RATE_LIMIT_MAX || 300),
       authLimit: Number(process.env.AUTH_RATE_LIMIT_MAX || 20), windowMs: Number(process.env.RPC_RATE_LIMIT_WINDOW_MS || 60000),
       analyticsReportHandler: createAnalyticsReportHandler(app.analytics),
+      recommendations: app.recommendations,
       healthCheck: async () => { const report = await healthReport(connection.db); return { ...report, ok: report.ok && workerHealthy, worker: { running: workerHealthy } }; },
     });
     const port = Number(process.env.PORT || 3000);

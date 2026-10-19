@@ -3,6 +3,9 @@ const crypto = require('node:crypto');
 const { WorkerCollection } = require('./atlas-worker-smoke');
 const { createTokenCipher } = require('../atlas/tokenCipher');
 const { createProviderInbound } = require('../atlas/providerInbound');
+const { createProviderService } = require('../atlas/providers');
+const { tokenHash } = require('../atlas/accounts');
+const argon2 = require('argon2');
 const { setupLibrary, LIBRARY_COLLECTIONS } = require('../atlas/librarySchema');
 const { setupProviders } = require('../atlas/providerSchema');
 const { setupMedia, createMediaService } = require('../atlas/media');
@@ -103,6 +106,57 @@ async function scenario(repo, client, media) {
     now: () => clock, spacing: { anilist: 0, mal: 0 } });
   result = await inbound.runOnce(1); assert.equal(result.results[0].status, 'skipped');
   assert.equal(await repoUnlink.libraryEntries.countDocuments({}), 0, 'unlink during a pull prevents later reconciliation');
+
+  // Delete after the outer ownership check, while media resolution is in flight.
+  // This used to recreate libraryEntries/libraryState after account erasure.
+  const repoDelete = localRepo(); const deleteUser = await link(repoDelete, 'delete', 'anilist');
+  repoDelete.users = new WorkerCollection(); repoDelete.sessions = new WorkerCollection();
+  const deleteToken = 'a'.repeat(64);
+  const account = { _id: deleteUser, username: 'DeleteUser', authVersion: 0, local_credentials_confirmed: true, password_hash: await argon2.hash('delete-password') };
+  await repoDelete.users.insertOne(account);
+  await repoDelete.sessions.insertOne({ _id: tokenHash(deleteToken), userId: deleteUser, expiresAt: new Date(Date.now() + 60000) });
+  for (const collection of Object.values(repoDelete)) collection.deleteMany = async query => {
+    let deletedCount = 0;
+    while ((await collection.deleteOne(query)).deletedCount) deletedCount++;
+    return { deletedCount };
+  };
+  const deletion = createProviderService({ client: fakeClient, repo: repoDelete, cipher, adapters: {},
+    accounts: { getAuthenticatedUser: async () => repoDelete.users.findOne({ _id: deleteUser, authVersion: 0 }) } });
+  assert.equal((await deletion.deleteAccount(deleteToken, 'DeleteUser', 'wrong-password')).ok, false);
+  const deleteMedia = localMedia(repoDelete); const originalEnsure = deleteMedia.ensure;
+  deleteMedia.ensure = async (...args) => {
+    const document = await originalEnsure(...args);
+    assert.equal((await deletion.deleteAccount(deleteToken, 'DeleteUser', 'delete-password')).ok, true);
+    return document;
+  };
+  inbound = createProviderInbound({ client: fakeClient, repo: repoDelete, media: deleteMedia, cipher,
+    adapters: { ...adapters, pull: async (_provider, _token, type) => type === 'ANIME' ? alPayload(14) : { lists: [] } },
+    now: () => clock, spacing: { anilist: 0, mal: 0 } });
+  result = await inbound.runOnce(1);
+  assert.equal(result.results[0].status, 'skipped');
+  for (const name of ['libraryEntries', 'libraryChanges', 'providerRefreshStates']) assert.equal(await repoDelete[name].countDocuments({ userId: deleteUser }), 0, `${name} stays erased after an in-flight pull`);
+  assert.equal(await repoDelete.libraryState.countDocuments({ _id: deleteUser }), 0, 'library state stays erased');
+  assert.equal((await repoDelete.users.findOne({ _id: deleteUser })).status, 'deleted');
+  assert.equal(await repoDelete.sessions.countDocuments({ userId: deleteUser }), 0, 'sessions revoked');
+
+  const providerOnlyDeletion = createProviderService({ client: fakeClient, repo: {}, cipher, adapters: {},
+    accounts: { getAuthenticatedUser: async () => ({ local_credentials_confirmed: false }) } });
+  const setupNeeded = await providerOnlyDeletion.deleteAccount(deleteToken, 'ProviderOnly', '');
+  assert.equal(setupNeeded.ok, false);
+  assert.equal(setupNeeded.needsLocalPassword, true, 'provider-only accounts receive password setup guidance');
+
+  // Seed may already hold a stale list of links when account erasure completes.
+  const repoSeed = localRepo(); const seedUser = await link(repoSeed, 'seed-delete', 'anilist');
+  const originalFind = repoSeed.providerAccounts.find.bind(repoSeed.providerAccounts);
+  repoSeed.providerAccounts.find = (...args) => {
+    const cursor = originalFind(...args); const originalToArray = cursor.toArray.bind(cursor);
+    cursor.toArray = async () => { const rows = await originalToArray(); await repoSeed.providerAccounts.deleteOne({ userId: seedUser }); return rows; };
+    return cursor;
+  };
+  inbound = createProviderInbound({ client: fakeClient, repo: repoSeed, media: localMedia(repoSeed), cipher, adapters,
+    now: () => clock, spacing: { anilist: 0, mal: 0 } });
+  await inbound.seed();
+  assert.equal(await repoSeed.providerRefreshStates.countDocuments({ userId: seedUser }), 0, 'stale seeding cannot recreate refresh state');
 
   const repoMal = localRepo(); const malUser = await link(repoMal, 'mal', 'mal'); let mappedBatches = 0; const mappingProgress = [];
   const hydratedMal = []; const hydratedMappings = [];

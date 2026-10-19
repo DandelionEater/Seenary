@@ -1,6 +1,7 @@
+import type { ReleaseReminderGroups } from '../utils/releaseReminderSettings';
 export type ListStatus = "planned" | "watching" | "completed" | "paused" | "dropped";
 export type MediaType = "ANIME" | "MANGA";
-export type SearchMatchType = MediaType | "CHARACTER" | "STUDIO" | "SONG" | "ARTIST";
+export type SearchMatchType = MediaType | "CHARACTER" | "STUDIO" | "SONG" | "ARTIST" | "GENRE" | "TAG";
 export type ThemeAccent = "violet" | "rose" | "amber" | "emerald" | "custom";
 export type TitleLanguage = "userPreferred" | "english" | "romaji" | "native";
 export type CardDensity = "comfortable" | "balanced" | "compact";
@@ -24,6 +25,9 @@ export type AppSettings = {
   discoverDensity: CardDensity;
   homeDensity: CardDensity;
   myListDensity: CardDensity;
+  releaseRemindersEnabled: boolean;
+  releaseReminderMinutes: number[];
+  releaseReminderGroups: ReleaseReminderGroups;
   startView: "home" | "list" | "search";
   shareAnonymousUsageStatistics: boolean;
   analyticsConsentDecided: boolean;
@@ -247,6 +251,8 @@ export type StudioCatalogResult = {
 };
 
 export type MediaSearchResults = {
+  genres?: SearchMedia[];
+  tags?: SearchMedia[];
   anime: SearchMedia[];
   manga: SearchMedia[];
   characters?: CharacterSearchResult[];
@@ -288,6 +294,7 @@ export type DiscoverMediaResult = {
 };
 
 export type ReleaseCalendarResult = {
+  hasNextPage?: boolean;
   mediaType: MediaType;
   start: number;
   end: number;

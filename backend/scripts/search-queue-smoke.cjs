@@ -1,0 +1,21 @@
+const assert = require('node:assert/strict');
+const { createProviderCache } = require('../atlas/providerCache');
+(async () => {
+  const { schedule } = createProviderCache({ queries: {}, requestSpacingMs: 15 });
+  const starts = [];
+  let releaseBackground;
+  const background = schedule(() => { starts.push(['background',Date.now()]); return new Promise(resolve => { releaseBackground=resolve; }); });
+  while (!releaseBackground) await new Promise(resolve=>setTimeout(resolve,1));
+  const nextBackground = schedule(() => { starts.push(['next background',Date.now()]); });
+  let releaseSearch;
+  const search = schedule(() => { starts.push(['search',Date.now()]); return new Promise(resolve => { releaseSearch=resolve; }); }, { interactive:true });
+  const secondSearch = schedule(() => { starts.push(['second search',Date.now()]); }, { interactive:true });
+  for (let i=0;!releaseSearch&&i<100;i++) await new Promise(resolve=>setTimeout(resolve,2));
+  assert.ok(releaseSearch,'search starts while background request remains pending');
+  assert.deepEqual(starts.map(row=>row[0]),['background','search']);
+  releaseSearch(); await search; await secondSearch;
+  assert.ok(!starts.some(row=>row[0]==='next background'),'background lane stays serialized');
+  releaseBackground(); await background; await nextBackground;
+  for(let i=1;i<starts.length;i++)assert.ok(starts[i][1]-starts[i-1][1]>=12,'shared start spacing is respected');
+  console.log('PASS: search bypasses slow background work, both lanes stay serialized, and provider starts remain spaced.');
+})().catch(error=>{console.error(error);process.exitCode=1;});

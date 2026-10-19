@@ -1,3 +1,4 @@
+import { normalizeReminderGroups } from './utils/releaseReminderSettings';
 import type {
   AnimeMedia,
   AppSettings,
@@ -229,6 +230,9 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   discoverDensity: "balanced",
   homeDensity: "balanced",
   myListDensity: "balanced",
+  releaseRemindersEnabled: true,
+  releaseReminderMinutes: [60, 0],
+  releaseReminderGroups: normalizeReminderGroups(null),
   startView: "home",
   shareAnonymousUsageStatistics: false,
   analyticsConsentDecided: false,
@@ -261,6 +265,9 @@ function normalizeSettings(settings: Partial<LocalSettings> | null | undefined):
     discoverDensity: normalizeDensity(settings?.discoverDensity),
     homeDensity: normalizeDensity(settings?.homeDensity),
     myListDensity: normalizeDensity(settings?.myListDensity),
+    releaseRemindersEnabled: settings?.releaseRemindersEnabled !== false,
+    releaseReminderMinutes: Array.isArray(settings?.releaseReminderMinutes) ? [...new Set((settings.releaseReminderMinutes as number[]).filter(minutes => [1440, 720, 360, 60, 30, 15, 0].includes(minutes)))] : [60, 0],
+    releaseReminderGroups: normalizeReminderGroups(settings?.releaseReminderGroups, settings?.releaseReminderMinutes),
     shareAnonymousUsageStatistics: settings?.shareAnonymousUsageStatistics === true,
     analyticsConsentDecided: settings?.analyticsConsentDecided === true,
   };

@@ -1,3 +1,4 @@
+const { createRecoveryService } = require('./recovery');
 const { setupAccounts, createAccountService } = require('./accounts');
 const { setupProviders } = require('./providerSchema');
 const { createProviderService } = require('./providers');
@@ -12,15 +13,20 @@ const { createMalMetadataCache } = require('./malMetadataCache');
 const { createMalMappingResolver } = require('./malMapping');
 const { createMalImportService } = require('./malImport');
 const { setupAnalytics, createAnalyticsService } = require('./analytics');
+const { setupSinceYouLiked, createSinceYouLikedService } = require('./sinceYouLiked');
 
 async function createAtlasApplication(connection) {
   const accountsRepo = await setupAccounts(connection.db); const accounts = await createAccountService(accountsRepo);
+  Object.assign(accounts, createRecoveryService(accountsRepo, accounts));
   const providersRepo = await setupProviders(connection.db); const analyticsRepo = await setupAnalytics(connection.db);
   Object.assign(providersRepo, analyticsRepo);
+  const recommendationsRepo = await setupSinceYouLiked(connection.db);
+  Object.assign(providersRepo, recommendationsRepo);
   const providers = createProviderService({ client: connection.client, repo: providersRepo, accounts,
     cipher: createTokenCipher(process.env.TOKEN_ENCRYPTION_KEY), adapters: createProviderAdapters() });
   const mediaRepo = await setupMedia(connection.db); const media = createMediaService(connection.client, mediaRepo);
-  const library = createLibraryService({ client: connection.client, repo: await setupLibrary(connection.db), accounts, media });
+  const libraryRepo = await setupLibrary(connection.db);
+  const library = createLibraryService({ client: connection.client, repo: libraryRepo, accounts, media });
   const queries = await setupMetadata(connection.db);
   const malCache = createMalMetadataCache({ media, repo: mediaRepo, queries, provider: { details: require('../mal').getPublicMediaDetails } });
   const malMapping = createMalMappingResolver({ media, queries, provider: { lookup: (type, id) => require('../anilist').getMediaByMalIds([id], type) } });
@@ -28,7 +34,8 @@ async function createAtlasApplication(connection) {
     provider: { collection: (type, username) => type === 'ANIME' ? require('../mal').getUserAnimeList(username) : require('../mal').getUserMangaList(username) } });
   const metadata = createMetadataService({ media, repo: mediaRepo, queries, provider: createAniListMetadataProvider(), malCache, malMapping, malImport });
   const analytics = createAnalyticsService({ repo: { ...providersRepo, ...accountsRepo }, accounts });
-  return { accounts, providers, media, library, metadata, analytics };
+  const recommendations = createSinceYouLikedService({ repo: recommendationsRepo, accounts, libraryRepo, mediaRepo });
+  return { accounts, providers, media, library, metadata, analytics, recommendations };
 }
 
 module.exports = { createAtlasApplication };

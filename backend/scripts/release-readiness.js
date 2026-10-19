@@ -188,8 +188,9 @@ function checkReleaseContract() {
     const expectedTag = `Tag: \`v${targetVersion}\``;
     if (!notes.includes(expectedTag)) fail('Release notes tag', `expected ${expectedTag}`);
     else pass('Release notes tag', `v${targetVersion}`);
-    if (!notes.includes('## New and improved') || !notes.includes('## Reliability and fixes')) {
-      fail('Release notes sections', 'expected New and improved plus Reliability and fixes');
+    const headings = [...notes.matchAll(/^## (.+)$/gm)].map(match => match[1]);
+    if (!headings.some(heading => /fixes/i.test(heading)) || !headings.some(heading => !/fixes/i.test(heading))) {
+      fail('Release notes sections', 'expected feature descriptions and a fixes section');
     } else {
       pass('Release notes sections');
     }
@@ -332,6 +333,12 @@ function main() {
     'atlas-discover-speed-smoke.js', 'atlas-discover-types-smoke.js', 'atlas-people-smoke.js',
     'atlas-mal-fallback-smoke.js', 'atlas-inbound-smoke.js', 'atlas-cache-maintenance-smoke.js',
     'atlas-storage-ownership-smoke.js',
+    'atlas-mal-metadata-smoke.js', 'password-recovery-smoke.js', 'password-methods-smoke.js',
+    'since-you-liked-smoke.js', 'since-you-liked-lifecycle-smoke.cjs', 'community-recommendations-smoke.cjs',
+    'recommendation-preferences-smoke.cjs', 'provider-signup-pull-smoke.js', 'tutorial-dismissal-smoke.js',
+    'session-renewal-smoke.cjs', 'discover-genres-smoke.cjs', 'discover-filters-smoke.cjs',
+    'global-search-smoke.cjs', 'search-latency-smoke.cjs', 'search-queue-smoke.cjs',
+    'calendar-pagination-smoke.js', 'release-notification-desktop-smoke.cjs', 'release-notification-interaction-smoke.cjs',
   ]) {
     runCommand(script, process.execPath, [path.join(__dirname, script)], { cwd: backendDir, shell: false });
   }
@@ -340,6 +347,9 @@ function main() {
   for (const script of [
     'desktop-improvements-smoke.mjs', 'watch-order-smoke.mjs', 'detail-cache-smoke.mjs',
     'franchise-library-smoke.mjs', 'cloud-library-smoke.mjs',
+    'search-resolvers-smoke.mjs', 'release-reminders-smoke.mjs', 'progressive-calendar-smoke.mjs',
+    'manga-library-identity-smoke.mjs', 'session-invalidation-smoke.mjs', 'session-renewal-smoke.mjs',
+    'since-you-liked-retention-smoke.mjs',
   ]) {
     runCommand(script, process.execPath, [path.join(frontendDir, 'scripts', script)], { cwd: frontendDir, shell: false });
   }

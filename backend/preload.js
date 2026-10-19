@@ -1,4 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
+contextBridge.exposeInMainWorld('desktopReleaseNotifications', {
+  show: notice => ipcRenderer.invoke('release-notice:show', notice),
+  clear: () => ipcRenderer.invoke('release-notice:clear'),
+  onTick: callback => { const handler = () => callback(); ipcRenderer.on('release-notice:tick', handler); return () => ipcRenderer.removeListener('release-notice:tick', handler); },
+  onOpen: callback => { const handler = (_event, payload) => callback(payload); ipcRenderer.on('release-notice:navigate', handler); return () => ipcRenderer.removeListener('release-notice:navigate', handler); },
+});
 
 function getSystemLocaleInfo() {
   try {
@@ -22,10 +28,12 @@ const legacyApi = {
   getMediaPeople: (type, id, kind, page = 1) => ipcRenderer.invoke('media:people', { type, id, kind, page }),
   getDiscoverMedia: (hideAdultContent = true, mediaType) =>
     ipcRenderer.invoke('anilist:discover-media', { hideAdultContent, mediaType }),
+  getDiscoverTags: (safe = true) => ipcRenderer.invoke('anilist:discover-tags', safe),
+  getDiscoverGenres: (safe = true) => ipcRenderer.invoke('anilist:discover-genres', safe),
   getDiscoverShelfAnime: (shelfId, page = 1, hideAdultContent = true, mediaType = 'ANIME') =>
     ipcRenderer.invoke('anilist:discover-shelf', { shelfId, page, hideAdultContent, mediaType }),
-  getReleaseCalendar: (start, end, hideAdultContent = true, mediaType = 'ANIME') =>
-    ipcRenderer.invoke('anilist:release-calendar', { start, end, hideAdultContent, mediaType }),
+  getReleaseCalendar: (start, end, hideAdultContent = true, mediaType = 'ANIME', page) =>
+    ipcRenderer.invoke('anilist:release-calendar', { start, end, hideAdultContent, mediaType, page }),
   getStudioMedia: (studioId, page = 1, hideAdultContent = true) =>
     ipcRenderer.invoke('anilist:studio-media', { studioId, page, hideAdultContent }),
   getArtistMedia: (artistSlug, page = 1, hideAdultContent = true) =>
@@ -119,6 +127,14 @@ const legacyApi = {
 
   unlinkMalAccount: (password) => ipcRenderer.invoke('auth:mal-unlink', { password }),
 
+  getRecoveryEmail: async () => ({ ok: true, configured: false }),
+  setRecoveryEmail: async () => ({ ok: false, message: 'Recovery email is available for cloud accounts.' }),
+  verifyRecoveryEmailCode: async () => ({ ok: false, message: 'Email verification is available for cloud accounts.' }),
+  resendRecoveryEmailCode: async () => ({ ok: false, message: 'Email verification is available for cloud accounts.' }),
+  verifyRecoveryEmail: async () => ({ ok: false, message: 'Open this link in the Seenary web app.' }),
+  requestPasswordReset: async () => ({ ok: false, message: 'Recovery email is available for cloud accounts.' }),
+  resetPassword: async () => ({ ok: false, message: 'Open this link in the Seenary web app.' }),
+  changePassword: (currentPassword, newPassword) => ipcRenderer.invoke('auth:change-password', { currentPassword, newPassword }),
   setLocalPassword: (password) =>
     ipcRenderer.invoke('auth:set-local-password', { password }),
 

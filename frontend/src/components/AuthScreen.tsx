@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { PasswordRecovery } from './PasswordRecovery';
+import { useEffect, useRef, useState } from "react";
 
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof Error) {
@@ -27,6 +28,11 @@ function LoadingSpinner() {
 }
 
 export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
+  const [recoveryAvailable, setRecoveryAvailable] = useState(false);
+  useEffect(() => { let active = true; window.api.getRecoveryEmail().then(reply => { if (active) setRecoveryAvailable(reply.configured === true); }).catch(() => {}); return () => { active = false; }; }, []);
+  const [forgotPassword, setForgotPassword] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [registeredUser, setRegisteredUser] = useState<Parameters<AuthScreenProps["onAuthenticated"]>[0] | null>(null);
   const [mode, setMode] = useState<"login" | "register">("login");
   const [oauthProfile, setOauthProfile] = useState<{
     provider: "AniList" | "MyAnimeList";
@@ -38,6 +44,18 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pendingProvider, setPendingProvider] = useState<string | null>(null);
+  const providerAttempt = useRef<AbortController | null>(null);
+
+  useEffect(() => () => providerAttempt.current?.abort(), []);
+
+  const cancelProviderLogin = () => {
+    providerAttempt.current?.abort();
+    providerAttempt.current = null;
+    setPendingProvider(null);
+    setBusy(false);
+    setMessage("Sign-in cancelled. Choose a login option to continue.");
+  };
 
   const submit = async () => {
     if (busy) return;
@@ -65,6 +83,13 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       }
 
       setMessage("");
+      if (mode === 'register' && recoveryEmail.trim()) {
+        setRegisteredUser(result.user);
+        try { const verification = await window.api.setRecoveryEmail(recoveryEmail.trim(), password); setMessage(verification.message); }
+        catch { setMessage('Your account was created, but we could not send the verification email. Add your recovery email in Settings.'); }
+        setPassword('');
+        return;
+      }
 
       await onAuthenticated({
         id: result.user.id,
@@ -92,12 +117,16 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
   const startProviderLogin = async (provider: "AniList" | "MyAnimeList") => {
     if (busy) return;
+    const attempt = new AbortController();
+    providerAttempt.current = attempt;
+    setPendingProvider(provider);
     setBusy(true);
     setMessage(`Waiting for ${provider} authorization...`);
     try {
       const result = provider === "MyAnimeList"
-        ? await window.api.startMalLogin()
-        : await window.api.startAniListLogin();
+        ? await window.api.startMalLogin(undefined, { signal: attempt.signal })
+        : await window.api.startAniListLogin(undefined, { signal: attempt.signal });
+      if (attempt.signal.aborted) return;
       if (result.ok && result.user) {
         await onAuthenticated({ id: result.user.id, username: result.user.username, tutorial_dismissed: result.user.tutorial_dismissed });
         return;
@@ -110,9 +139,13 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       }
       setMessage(result.message || `${provider} login failed. Try again.`);
     } catch (error) {
-      setMessage(errorMessage(error, `${provider} login failed. Try again.`));
+      if (!attempt.signal.aborted) setMessage(errorMessage(error, `${provider} login failed. Try again.`));
     } finally {
-      setBusy(false);
+      if (providerAttempt.current === attempt) {
+        providerAttempt.current = null;
+        setPendingProvider(null);
+        setBusy(false);
+      }
     }
   };
 
@@ -153,6 +186,9 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       setBusy(false);
     }
   };
+
+  if (forgotPassword) return <PasswordRecovery onBack={() => setForgotPassword(false)} />;
+  if (registeredUser) return <div className="flex h-full items-center justify-center px-6"><div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 p-6 text-white"><h1 className="text-2xl font-bold">Account created</h1><p role="status" className="mt-4 text-sm text-white/70">{message}</p><button type="button" disabled={busy} onClick={() => void onAuthenticated(registeredUser)} className="mt-5 rounded-2xl bg-white px-4 py-3 font-semibold text-black disabled:opacity-50">Continue to Seenary</button></div></div>;
 
   return (
     <div className="flex h-full items-center justify-center px-6">
@@ -216,6 +252,9 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           </div>
         )}
 
+        {!oauthProfile && mode === 'register' && recoveryAvailable && <label className="mt-4 block text-sm text-white/60">Recovery email (optional)<input type="email" autoComplete="email" maxLength={254} value={recoveryEmail} onChange={e => setRecoveryEmail(e.target.value)} disabled={busy} className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white" /><span className="mt-2 block text-xs">Verify your email after registering to enable password recovery.</span></label>}
+        {!oauthProfile && mode === 'login' && <button type="button" disabled={busy} onClick={() => { setPassword(''); setMessage(''); setForgotPassword(true); }} className="mt-3 w-full text-right text-sm text-white/60 hover:text-white">Forgot password?</button>}
+
         {message && (
           <p className="mt-4 text-sm text-white/70">{message}</p>
         )}
@@ -246,6 +285,16 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
             </span>
           )}
         </button>
+
+        {pendingProvider && (
+          <button
+            type="button"
+            onClick={cancelProviderLogin}
+            className="mt-3 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm text-white/80 transition hover:bg-white/10"
+          >
+            Cancel sign-in
+          </button>
+        )}
 
         {!oauthProfile && (
           <>

@@ -124,9 +124,9 @@ function createStagingServer(service, providers = null, media = null, library = 
       if (!body || typeof body.method !== 'string' || !Array.isArray(body.args)) { send(400, { ok: false }); return; }
       const methodLimit = body.method === 'previewPdfImport' ? 16 * 1024 * 1024
         : body.method === 'previewTextImport' ? 1024 * 1024
-          : body.method === 'mutateLibraryEntry' ? 65536 : 8192;
+          : body.method === 'mutateLibraryEntry' ? 65536 : body.method === 'getDiscoverShelfAnime' ? 32768 : 8192;
       if (size > methodLimit) { send(413, { ok: false, message: 'Request too large.' }); return; }
-      if (['register', 'login', 'changePassword', 'beginProviderLogin', 'beginProviderLink', 'completeProviderSignup', 'unlinkProvider', 'setLocalPassword', 'deleteAccount', 'refreshProvider', 'requestProviderSync'].includes(body.method) && !consume(`auth:${clientAddress}`, config.authLimit)) {
+      if (['verifyRecoveryEmailCode', 'resendRecoveryEmailCode', 'setRecoveryEmail', 'verifyRecoveryEmail', 'requestPasswordReset', 'resetPassword', 'register', 'login', 'changePassword', 'beginProviderLogin', 'beginProviderLink', 'completeProviderSignup', 'unlinkProvider', 'setLocalPassword', 'deleteAccount', 'refreshProvider', 'requestProviderSync'].includes(body.method) && !consume(`auth:${clientAddress}`, config.authLimit)) {
         send(429, { ok: false, message: 'Too many authentication attempts.' }); return;
       }
       const token = getToken(req, config.cookieName);
@@ -138,6 +138,40 @@ function createStagingServer(service, providers = null, media = null, library = 
       }
       let result;
       switch (body.method) {
+        case 'getRecommendationPreferences': {
+          if (!options.recommendations) { result = { ok: false, message: 'Recommendation preferences are unavailable.' }; break; }
+          result = await options.recommendations.preferences(token, body.args[0]);
+          if (result.ok && result.items.length && metadata) {
+            const cards = new Map();
+            for (const type of ['ANIME', 'MANGA']) {
+              const ids = [...new Set(result.items.filter(item => item.mediaType === type).flatMap(item => [item.mediaId, item.sourceMediaId]).filter(Number.isSafeInteger))];
+              for (let offset = 0; offset < ids.length; offset += 24) {
+                for (const card of await metadata.savedRecommendationCards(type, ids.slice(offset, offset + 24), body.args[0].hideAdultContent !== false)) cards.set(`${type}:${card.id}`, card);
+              }
+            }
+            result.items = result.items.map(item => ({ ...item, media: cards.get(`${item.mediaType}:${item.mediaId}`) ?? null,
+              source: item.sourceMediaId ? cards.get(`${item.mediaType}:${item.sourceMediaId}`) ?? null : null }));
+          }
+          break;
+        }
+        case 'getCommunityRecommendations': {
+          if (!options.recommendations || !metadata) { result = { ok: true, items: [] }; break; }
+          result = await options.recommendations.community(token, body.args[0]);
+          if (result.ok && result.items.length) {
+            const cards = await metadata.savedRecommendationCards(body.args[0].mediaType, result.items.map(item => item.mediaId), body.args[0].hideAdultContent !== false);
+            const byId = new Map(cards.map(card => [card.id, card]));
+            result.items = result.items.flatMap(item => byId.has(item.mediaId) ? [{ recommendations: item.recommendations, dislikes: item.dislikes, media: byId.get(item.mediaId) }] : []);
+          }
+          break;
+        }
+        case 'getSinceYouLikedState':
+        case 'setSinceYouLikedFeedback':
+        case 'setSinceYouLikedHidden': {
+          if (!options.recommendations) { send(503, { ok: false, message: 'Recommendation feedback is unavailable.' }); return; }
+          const action = { getSinceYouLikedState: 'state', setSinceYouLikedFeedback: 'feedback', setSinceYouLikedHidden: 'hide' }[body.method];
+          result = await options.recommendations[action](token, body.args[0]);
+          break;
+        }
         case 'setAnalyticsConsent':
         case 'recordEngagement': {
           if (!analytics) { send(503, { ok: false }); return; }
@@ -165,6 +199,8 @@ function createStagingServer(service, providers = null, media = null, library = 
         case 'getAnimeFranchiseStartDate':
         case 'getMediaDetails':
         case 'searchMedia':
+        case 'getDiscoverTags':
+        case 'getDiscoverGenres':
         case 'getDiscoverShelfAnime':
         case 'getReleaseCalendar':
         case 'getStudioMedia':
@@ -262,7 +298,7 @@ function createStagingServer(service, providers = null, media = null, library = 
             excludeSyncEntry: () => providers.setSyncExclusion(token, body.args[0]?.id, true),
             restoreSyncExclusion: () => providers.setSyncExclusion(token, body.args[0]?.id, false),
             setLocalPassword: () => providers.setLocalPassword(token, body.args[0]),
-            unlinkProvider: () => providers.unlink(token, body.args[0], body.args[1]),
+            unlinkProvider: () => providers.unlink(token, body.args[0], body.args[1], body.args[2]),
             getAccountSettings: () => providers.settings(token), setAccountSettings: () => providers.settings(token, body.args[0]),
             deleteAccount: () => providers.deleteAccount(token, body.args[0], body.args[1]),
           };
@@ -273,7 +309,25 @@ function createStagingServer(service, providers = null, media = null, library = 
         case 'register': result = await service.register(body.args[0], body.args[1]); break;
         case 'login': result = await service.login(body.args[0], body.args[1]); break;
         case 'getSession': result = await service.getSession(token); break;
+        case 'setTutorialDismissed': result = await service.setTutorialDismissed(token, body.args[0]); break;
+        // Only clients handling actual user input call this. Startup, polling,
+        // background sync and ordinary session checks must not extend login.
+        case 'renewSession':
+          result = await service.renewSession(token);
+          if (!result.ok) { send(401, result); return; }
+          res.setHeader('Set-Cookie', cookie(config.cookieName, token, config.secureCookies));
+          break;
         case 'logout': result = await service.logout(token); res.setHeader('Set-Cookie', cookie(config.cookieName, '', config.secureCookies)); break;
+        case 'getRecoveryEmail': result = await service.getRecoveryEmail(token); break;
+        case 'setRecoveryEmail': result = await service.setRecoveryEmail(token, body.args[0], body.args[1]); break;
+        case 'verifyRecoveryEmailCode': result = await service.verifyRecoveryEmailCode(token, body.args[0]); break;
+        case 'resendRecoveryEmailCode': result = await service.resendRecoveryEmailCode(token); break;
+        case 'verifyRecoveryEmail': result = await service.verifyRecoveryEmail(body.args[0]); break;
+        case 'requestPasswordReset': result = await service.requestPasswordReset(body.args[0]); break;
+        case 'resetPassword':
+          result = await service.resetPassword(body.args[0], body.args[1]);
+          if (result.ok) res.setHeader('Set-Cookie', cookie(config.cookieName, '', config.secureCookies));
+          break;
         case 'changePassword':
           result = await service.changePassword(token, body.args[0], body.args[1]);
           if (result.ok) res.setHeader('Set-Cookie', cookie(config.cookieName, '', config.secureCookies));

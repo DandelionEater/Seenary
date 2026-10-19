@@ -112,6 +112,7 @@ function createLibraryService({ client, repo, accounts, media }) {
           const state = await allocateSequence(repo, user._id, session);
           const now = new Date();
           const entry = { _id: id, userId: user._id, mediaId: canonical._id, type: canonical.type, ...fields, deleted,
+            statusChangedAt: current?.status === fields.status ? current.statusChangedAt || current.updatedAt || now : now,
             revision: (current?.revision || 0) + 1, sequence: state.sequence, createdAt: current?.createdAt || now, updatedAt: now, localUpdatedAt: now };
           await repo.libraryEntries.replaceOne({ _id: id }, entry, { upsert: true, session });
           await repo.libraryChanges.insertOne({ _id: crypto.randomUUID(), userId: user._id, mediaId: canonical._id,

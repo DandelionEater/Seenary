@@ -43,6 +43,13 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
     if (repo.jobLocks) await repo.jobLocks.deleteMany({ userId, ...(provider ? { provider } : {}) }, { session });
     if (repo.providerRefreshStates) await repo.providerRefreshStates.deleteMany({ userId, ...(provider ? { provider } : {}) }, { session });
   }
+  async function queueInitialPull(link, session) {
+    const now = new Date();
+    await repo.providerRefreshStates.findOneAndUpdate({ _id: link._id }, { $setOnInsert: {
+      _id: link._id, userId: link.userId, provider: link.provider, linkRevision: link.revision,
+      revision: 0, nextAttemptAt: now, manualRequestedAt: now,
+    } }, { upsert: true, returnDocument: 'after', session });
+  }
   return {
     async exportAccount(token) {
       const user = await accounts.getAuthenticatedUser(token);
@@ -107,6 +114,7 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
         result = await transaction(async (session) => {
           const owner = await repo.providerAccounts.findOne({ provider, providerUserId: String(viewer.id) }, { session });
           let user;
+          let createdUser = false;
           if (flow.mode === 'link') {
             if (!await repo.sessions.findOne({ _id: flow.sessionHash, userId: flow.userId, expiresAt: { $gt: new Date() } }, { session })) return fail('Link session expired.');
             user = await touchUser(flow.userId, session, flow.authVersion);
@@ -120,6 +128,7 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
               password_hash: passwordHash, local_credentials_confirmed: false, tutorial_dismissed: false,
               authVersion: 0, schemaVersion: 1, lifecycleRevision: 0, created_at: now, updated_at: now, last_login_at: now };
             await repo.users.insertOne(user, { session });
+            createdUser = true;
           }
           const current = await repo.providerAccounts.findOne({ userId: user._id, provider }, { session });
           const now = new Date();
@@ -129,6 +138,7 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
             revision: (current?.revision ?? -1) + 1 };
           if (current) await repo.providerAccounts.replaceOne({ _id: current._id }, link, { session });
           else await repo.providerAccounts.insertOne(link, { session });
+          if (createdUser) await queueInitialPull(link, session);
           await repo.users.updateOne({ _id: user._id }, { $set: { last_login_at: now } }, { session });
           return { ok: true, user, account: publicLink(link) };
         });
@@ -174,6 +184,7 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
             refreshToken: flow.refreshToken, expiresAt: flow.providerExpiresAt || null, needsReauthorization: false,
             createdAt: now, updatedAt: now, lastImportAt: null, revision: 0 };
           await repo.providerAccounts.insertOne(link, { session });
+          await queueInitialPull(link, session);
           return { ok: true, user, account: publicLink(link) };
         });
         if (!result.ok) return result;
@@ -187,7 +198,7 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
       const user = await accounts.getAuthenticatedUser(token);
       if (!user) return fail('You must be logged in.');
       if (provider !== undefined && !validProvider(provider)) return fail('Invalid provider.');
-      return { ok: true, account: publicLink(await repo.providerAccounts.findOne({ userId: user._id, ...(provider ? { provider } : {}) })) };
+      return { ok: true, localCredentialsConfirmed: user.local_credentials_confirmed !== false, account: publicLink(await repo.providerAccounts.findOne({ userId: user._id, ...(provider ? { provider } : {}) })) };
     },
     async setLocalPassword(token, password) {
       if (typeof password !== 'string' || password.length < 8 || password.length > 128) return fail('Password must contain 8–128 characters.');
@@ -198,17 +209,21 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
         return { ok: true, message: 'Password set. Sign in again.' };
       });
     },
-    async unlink(token, provider, password) {
+    async unlink(token, provider, password, setPassword = false) {
       const user = await accounts.getAuthenticatedUser(token);
-      if (!validProvider(provider) || !user || typeof password !== 'string' || password.length > 128 || !password
-          || !await argon2.verify(user.password_hash, password)) return fail('Confirm your Seenary password before unlinking.');
+      if (!validProvider(provider) || !user || typeof password !== 'string' || password.length > 128 || !password) return fail('Confirm your Seenary password before unlinking.');
+      const creatingPassword = setPassword === true && user.local_credentials_confirmed === false;
+      if (setPassword === true && !creatingPassword) return fail('A password already exists. Confirm your current Seenary password.');
+      if (creatingPassword && password.length < 8) return fail('Password must contain 8?128 characters.');
+      if (!creatingPassword && !await argon2.verify(user.password_hash, password)) return fail('Confirm your Seenary password before unlinking.');
+      const newHash = creatingPassword ? await argon2.hash(password, { type: argon2.argon2id }) : null;
       return authenticatedWrite(token, async (current, session) => {
         if (current.authVersion !== user.authVersion) return fail('Account changed; sign in again.');
         const link = await repo.providerAccounts.findOne({ userId: user._id, provider }, { session });
         if (link) await repo.providerAccounts.deleteOne({ _id: link._id }, { session });
         await repo.oauthFlows.deleteMany({ userId: user._id, provider }, { session });
         await cancelWork(user._id, session, provider);
-        await repo.users.updateOne({ _id: user._id }, { $inc: { authVersion: 1 }, $set: { local_credentials_confirmed: true } }, { session });
+        await repo.users.updateOne({ _id: user._id }, { $inc: { authVersion: 1 }, $set: { local_credentials_confirmed: true, ...(newHash ? { password_hash: newHash, updated_at: new Date() } : {}) } }, { session });
         return { ok: true, message: 'Provider unlinked. Sign in again.' };
       });
     },
@@ -319,7 +334,9 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
     },
     async deleteAccount(token, username, password) {
       const user = await accounts.getAuthenticatedUser(token);
-      if (!user || username !== user.username || typeof password !== 'string' || !password || password.length > 128
+      if (!user) return fail('You must be logged in.');
+      if (user.local_credentials_confirmed === false) return { ...fail('Set a Seenary password in Sign-in methods before deleting your account.'), needsLocalPassword: true };
+      if (username !== user.username || typeof password !== 'string' || !password || password.length > 128
           || !await argon2.verify(user.password_hash, password)) return fail('Confirm your username and Seenary password.');
       return authenticatedWrite(token, async (current, session) => {
         if (current.authVersion !== user.authVersion) return fail('Account changed; sign in again.');
@@ -330,7 +347,7 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
         await repo.users.updateOne({ _id: user._id }, { $set: { status: 'deleted', username: anonymized,
           username_normalized: anonymized, password_hash: '', local_credentials_confirmed: null, tutorial_dismissed: false,
           last_login_at: null, updated_at: new Date(), deletedAt: new Date(), ...(migrationBlockHash ? { migrationBlockHash } : {}) },
-          $unset: { sourceFingerprint: '', legacy: '', legacyKey: '' }, $inc: { authVersion: 1 } }, { session });
+          $unset: { recoveryEmail: '', recoveryPending: '', passwordReset: '', recoverySentAt: '', resetSentAt: '', sourceFingerprint: '', legacy: '', legacyKey: '' }, $inc: { authVersion: 1 } }, { session });
         return { ok: true, message: 'Account deleted.' };
       });
     },

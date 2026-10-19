@@ -3,11 +3,13 @@ const { safeUser } = require('./accounts');
 const USER_ID_COLLECTIONS = [
   'sessions', 'providerAccounts', 'oauthFlows', 'providerMigrationReceipts', 'libraryEntries', 'libraryChanges',
   'librarySnapshots', 'mutationReceipts', 'libraryMigrationReceipts', 'jobs', 'jobLocks', 'providerRefreshStates',
+  'sinceYouLikedFeedback', 'sinceYouLikedHidden', 'sinceYouLikedLifecycle',
 ];
 const USER_KEY_COLLECTIONS = ['accountSettings', 'libraryState'];
 const EXPORT_COLLECTIONS = [
   'accountSettings', 'providerAccounts', 'libraryEntries', 'libraryChanges', 'libraryState', 'librarySnapshots',
   'mutationReceipts', 'libraryMigrationReceipts', 'jobs', 'providerRefreshStates',
+  'sinceYouLikedFeedback', 'sinceYouLikedHidden', 'sinceYouLikedLifecycle',
 ];
 const PRIVATE_KEYS = new Set(['accessToken', 'refreshToken', 'password_hash', 'sourceFingerprint', 'legacyKey', 'legacy',
   'leaseOwner', 'leaseUntil', 'refreshLease', 'refreshLeaseUntil', 'owner', 'bindingHash', 'sessionHash', 'verifier']);
@@ -28,7 +30,7 @@ async function exportAccountData(repo, user) {
     const query = USER_KEY_COLLECTIONS.includes(name) ? { _id: user._id } : { userId: user._id };
     data[name] = portable(await rows(repo[name], query));
   }
-  return { format: 'seenary.account-export', version: 1, exportedAt: new Date().toISOString(), account: portable(safeUser(user)), data };
+  return { format: 'seenary.account-export', version: 1, exportedAt: new Date().toISOString(), account: portable({ ...safeUser(user), recoveryEmail: user.recoveryEmail || null, pendingRecoveryEmail: user.recoveryPending?.email || null }), data };
 }
 async function eraseAccountData(repo, userId, session) {
   const counts = {};

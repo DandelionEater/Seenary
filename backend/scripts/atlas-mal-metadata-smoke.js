@@ -51,10 +51,10 @@ async function verify(repo, client) {
   assert.deepEqual(final.sources.anilist, al);
   const manga = await service.ingest({ id: 1, title: 'Manga', synopsis: '', genres: [], status: 'finished', num_chapters: 0, num_volumes: 0 }, 'MANGA', 'details');
   assert.notEqual(manga._id, first._id);
-  assert.equal(manga.sources.mal.groups.details.freshUntil.getTime(), clock + 7 * 24 * 3600000);
+  assert.equal(manga.sources.mal.groups.details.freshUntil.getTime(), clock + 30 * 24 * 3600000);
   assert.equal(manga.anilistId, undefined);
   const unknown = await service.ingest({ id: 2, title: 'Unknown' }, 'ANIME');
-  assert.equal(unknown.sources.mal.groups.card.freshUntil.getTime(), clock + 24 * 3600000);
+  assert.equal(unknown.sources.mal.groups.card.freshUntil.getTime(), clock + 7 * 24 * 3600000);
   await assert.rejects(service.ingest({ id: -1, title: 'Bad' }, 'ANIME'));
   await assert.rejects(service.ingest(raw, 'OTHER'));
   await assert.rejects(service.ingest(raw, 'ANIME', 'other'));

@@ -862,12 +862,15 @@ export default function MediaDetails({
                         (item): item is typeof item & { mediaRecommendation: RecommendationMedia } =>
                           Boolean(item.mediaRecommendation)
                       )
+                      .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
                       .map((item) => ({
                         label: item.rating ? `${item.rating} votes` : "Recommended",
                         media: item.mediaRecommendation,
                       }))}
                   />
                 )}
+
+                <CommunityRecommendationShelf key={`${userId}:${mediaType}:${mediaId}:${hideAdultContent}`} mediaId={mediaId} mediaType={mediaType} titleLanguage={titleLanguage} hideAdultContent={hideAdultContent} onSelectMedia={onSelectMedia} />
 
                 {(streamingEpisodes.length > 0 || externalLinks.length > 0) && (
                   <LinksSection
@@ -2472,17 +2475,19 @@ function RelatedAnimeShelf({
           const tooltipLabel = canOpen ? `Open ${titleText}` : titleText;
 
           const card = (
-            <Tooltip key={`${media?.id ?? index}-${edge.relationType ?? "related"}`} content={tooltipLabel} as="div" className="block">
+            <Tooltip key={`${media?.id ?? index}-${edge.relationType ?? "related"}`} content={tooltipLabel} as="div" className={libraryActions ? "min-w-0 flex-1" : "block"}>
             <button
               type="button"
               onClick={() =>
                 canOpen && relatedMediaType && onSelectMedia?.(mediaId, relatedMediaType)
               }
               disabled={!canOpen}
-              className="group grid w-full min-w-0 grid-cols-[3.5rem_1fr] gap-3 rounded-2xl border border-white/10 bg-white/3 p-3 text-left transition hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-white/35 disabled:cursor-default disabled:hover:translate-y-0 disabled:hover:border-white/10 disabled:hover:bg-white/3"
+              className={libraryActions
+                ? "group flex w-full min-w-0 items-center gap-3 rounded-t-2xl p-3 text-left transition hover:bg-white/8 disabled:cursor-default focus-visible:outline-2 focus-visible:outline-(--app-accent) sm:rounded-l-2xl sm:rounded-tr-none"
+                : "group grid w-full min-w-0 grid-cols-[3.5rem_1fr] gap-3 rounded-2xl border border-white/10 bg-white/3 p-3 text-left transition hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-white/35 disabled:cursor-default disabled:hover:translate-y-0 disabled:hover:border-white/10 disabled:hover:bg-white/3"}
               aria-label={tooltipLabel}
             >
-              <div className="h-20 w-14 overflow-hidden rounded-xl bg-white/5">
+              <div className={libraryActions ? "h-16 w-11 shrink-0 overflow-hidden rounded-lg bg-white/5" : "h-20 w-14 overflow-hidden rounded-xl bg-white/5"}>
                 {media?.coverImage?.large ? (
                   <img
                     src={media.coverImage.large}
@@ -2494,7 +2499,7 @@ function RelatedAnimeShelf({
                 )}
               </div>
 
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${relation.tone}`}
@@ -2548,12 +2553,18 @@ function RelatedAnimeShelf({
             </Tooltip>
           );
           return libraryActions && relatedMediaType && Number.isInteger(mediaId) && mediaId > 0 ? (
-            <div key={`${mediaId}-${index}`} className="space-y-2">{card}<div className="px-3"><FranchiseLibraryControls id={mediaId} type={relatedMediaType} title={titleText} /></div></div>
+            <div key={`${mediaId}-${index}`} className="flex flex-col rounded-2xl border border-white/10 bg-white/3 sm:flex-row sm:items-center">
+              {card}
+              <div className="relative flex shrink-0 items-center justify-center p-3 sm:w-40 sm:self-stretch">
+                <span aria-hidden="true" className="absolute inset-x-3 top-0 h-px bg-white/10 sm:inset-x-auto sm:inset-y-3 sm:left-0 sm:h-auto sm:w-px" />
+                <FranchiseLibraryControls id={mediaId} type={relatedMediaType} title={titleText} />
+              </div>
+            </div>
           ) : card;
         });
 
   if (bare || showAll) {
-    return <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{cards}</div>;
+    return <div className={libraryActions ? "space-y-2" : "grid grid-cols-1 gap-3 md:grid-cols-2"}>{cards}</div>;
   }
 
   return (
@@ -2626,19 +2637,39 @@ function RelationsModal({
   );
 }
 
+function CommunityRecommendationShelf({ mediaId, mediaType, titleLanguage, hideAdultContent, onSelectMedia }: {
+  mediaId: number; mediaType: MediaType; titleLanguage: TitleLanguage; hideAdultContent: boolean;
+  onSelectMedia?: (mediaId: number, mediaType: MediaType) => void;
+}) {
+  const [items, setItems] = useState<Array<{ recommendations: number; dislikes: number; media: RecommendationMedia }>>([]);
+  useEffect(() => {
+    let active = true;
+    void window.api.getCommunityRecommendations({ mediaType, sourceMediaId: mediaId, hideAdultContent }).then(reply => {
+      if (active && reply.ok) setItems((reply.items ?? []).filter(item => item.recommendations > 0)
+        .sort((a, b) => b.recommendations - a.recommendations || a.media.id - b.media.id));
+    }).catch(() => { /* Optional shelf stays hidden when community data is unavailable. */ });
+    return () => { active = false; };
+  }, [mediaId, mediaType, hideAdultContent]);
+  if (!items.length) return null;
+  return <MediaShelf title={`Seenary users recommend (${items.length})`} icon={UsersIcon} titleLanguage={titleLanguage} onSelectMedia={onSelectMedia}
+    items={items.map(item => ({ media: item.media, dislikes: item.dislikes ?? 0, label: `${item.recommendations} ${item.recommendations === 1 ? 'recommendation' : 'recommendations'}` }))} />;
+}
+
 function MediaShelf({
   title,
   icon: Icon,
   items,
   onSelectMedia,
+  titleLanguage,
 }: {
   title: string;
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
-  items: Array<{ label: string; media: RecommendationMedia }>;
+  items: Array<{ label: string; media: RecommendationMedia; dislikes?: number }>;
   onSelectMedia?: (mediaId: number, mediaType: MediaType) => void;
+  titleLanguage?: TitleLanguage;
 }) {
-  const cards = items.map(({ label, media }, index) => {
-    const titleText = getMediaTitle(media);
+  const cards = items.map(({ label, media, dislikes }, index) => {
+    const titleText = titleLanguage ? getPreferredTitle(media.title, titleLanguage) : getMediaTitle(media);
     const mediaId = Number(media?.id);
     const recommendationType = getRelatedMediaType(media);
     const canOpen =
@@ -2677,7 +2708,10 @@ function MediaShelf({
               {titleText}
             </p>
           </div>
-          <p className="mt-2 truncate text-xs text-white/45">{label}</p>
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+            <span className="text-white/45">{label}</span>
+            {dislikes !== undefined && <span className="text-rose-200/65">{dislikes} {dislikes === 1 ? 'dislike' : 'dislikes'}</span>}
+          </div>
           <div className="mt-3 flex flex-wrap gap-1.5">
             {media?.format && (
               <span className="rounded-full bg-white/8 px-2 py-1 text-[11px] text-white/45">

@@ -1,5 +1,7 @@
 const { app, ipcMain, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const UPDATE_CHECK_INTERVAL_MS = 3 * 60 * 60 * 1000;
 const STARTUP_CHECK_DELAY_MS = 10 * 1000;
@@ -18,6 +20,16 @@ let handlersRegistered = false;
 let updaterEventsRegistered = false;
 let activeCheckPromise = null;
 let activeDownloadPromise = null;
+
+function logUpdate(level, ...messages) {
+  try {
+    const logPath = path.join(app.getPath('userData'), 'updater.log');
+    if (fs.existsSync(logPath) && fs.statSync(logPath).size > 1024 * 1024) fs.writeFileSync(logPath, '');
+    const message = messages.map(value => value instanceof Error ? value.message : String(value))
+      .join(' ').replace(/https?:\/\/\S+/gi, '[download URL]');
+    fs.appendFileSync(logPath, `${new Date().toISOString()} [${level}] ${message}\n`);
+  } catch { /* Logging must never interrupt an update. */ }
+}
 
 function isAutoUpdateAvailable() {
   return process.platform !== 'linux';
@@ -57,6 +69,13 @@ function setupAutoUpdates(win) {
   }
 
   autoUpdater.autoDownload = false;
+  autoUpdater.logger = {
+    info: (...messages) => logUpdate('info', ...messages),
+    warn: (...messages) => logUpdate('warn', ...messages),
+    error: (...messages) => logUpdate('error', ...messages),
+    debug() {},
+  };
+  logUpdate('info', `Updater initialized for ${app.getVersion()}; full installer downloads only.`);
   autoUpdater.autoInstallOnAppQuit = false;
   // Seenary wraps Electron Builder's NSIS output in its own bootstrapper. The
   // installed updater cache therefore contains the inner installer, while the

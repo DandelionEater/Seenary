@@ -1,3 +1,6 @@
+import { createBrowseShelfId } from '../utils/discoverBrowseFilters';
+import { DiscoverGenres } from './DiscoverGenres';
+import { loadCalendarPages } from '../utils/progressiveCalendar';
 import { AccentGlows } from "./ui/AccentGlows";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactNode } from "react";
@@ -26,7 +29,13 @@ import {
   StarIcon,
   TvIcon,
   XMarkIcon,
+  HandThumbUpIcon,
+  HandThumbDownIcon,
+  NoSymbolIcon,
 } from "@heroicons/react/24/outline";
+import { useSinceYouLiked } from '../hooks/useSinceYouLiked';
+import { recommendationPairKey } from '../types/sinceYouLiked';
+import type { RecommendationPairState, RecommendationFeedback } from '../types/sinceYouLiked';
 import { getPreferredTitle, type TitleLanguage } from "../utils/titlePreference";
 import { getMigratedLocalStorageItem } from "../utils/localStorageMigration";
 import { LibraryLens, type LibraryDestination } from "./LibraryLens";
@@ -86,12 +95,14 @@ type PersonalGridWidgetId =
   | "continue"
   | "planned"
   | "sinceLiked";
+type DiscoverGridItem = { id: string; columns: number; rows: number };
 type ShelfOrientation = "horizontal" | "vertical";
 type PersonalGridItem = {
   id: PersonalGridWidgetId;
   columns: number;
   rows: number;
   orientation?: ShelfOrientation;
+  hidden?: boolean;
 };
 type DiscoverDensity = "comfortable" | "balanced" | "compact";
 type HomeDensity = "comfortable" | "balanced" | "compact";
@@ -115,30 +126,12 @@ const MANGA_PERSONAL_GRID_WIDGET_LABELS: Record<PersonalGridWidgetId, string> = 
   planned: "Plan to Read",
   sinceLiked: "Since You Liked",
 };
-const PERSONAL_GRID_CONSTRAINTS: Record<
-  PersonalGridWidgetId,
-  { minColumns: number; maxColumns: number; minRows: number; maxRows: number }
-> = {
-  spotlight: { minColumns: 5, maxColumns: 12, minRows: 5, maxRows: 9 },
-  account: { minColumns: 4, maxColumns: 12, minRows: 5, maxRows: 10 },
-  stats: { minColumns: 3, maxColumns: 12, minRows: 2, maxRows: 5 },
-  activity: { minColumns: 3, maxColumns: 12, minRows: 3, maxRows: 12 },
-  continue: { minColumns: 3, maxColumns: 12, minRows: 5, maxRows: 14 },
-  planned: { minColumns: 3, maxColumns: 12, minRows: 5, maxRows: 14 },
-  sinceLiked: { minColumns: 5, maxColumns: 12, minRows: 6, maxRows: 16 },
-};
 const PERSONAL_GRID_SHELF_IDS = new Set<PersonalGridWidgetId>([
   "stats",
   "activity",
   "continue",
   "planned",
 ]);
-const PERSONAL_GRID_HORIZONTAL_ROWS: Partial<Record<PersonalGridWidgetId, number>> = {
-  stats: 2,
-  activity: 3,
-  continue: 5,
-  planned: 5,
-};
 const DEFAULT_PERSONAL_GRID_LAYOUT: PersonalGridItem[] = [
   { id: "spotlight", columns: 7, rows: 6 },
   { id: "account", columns: 5, rows: 6 },
@@ -360,7 +353,7 @@ type RecommendationCandidate = {
   strength: number;
   sourceCount: number;
   sourceTitles: string[];
-  source?: RecommendationSource | null;
+  source: RecommendationSource;
   sourceStrength: number;
 };
 
@@ -606,6 +599,29 @@ export function HomePage({
   const [discoverLayoutOrder, setDiscoverLayoutOrder] = useState<string[]>(
     readDiscoverLayoutOrder
   );
+  const [discoverHiddenSections, setDiscoverHiddenSections] = useState<string[]>(() => readDiscoverHiddenSections(userId));
+  function saveDiscoverHiddenSections(hidden: string[]) {
+    setDiscoverHiddenSections(hidden);
+    window.localStorage.setItem(`seenary.discover-hidden-${userId}`, JSON.stringify(hidden));
+    const result = window.desktopConfig?.setLayoutOrders(userId, { discoverHiddenSections: hidden });
+    if (result && !result.ok) console.warn(result.message || 'Failed to save Discover visibility.');
+  }
+  useEffect(() => { setDiscoverHiddenSections(readDiscoverHiddenSections(userId)); }, [userId]);
+  const [discoverGridLayout, setDiscoverGridLayout] = useState<DiscoverGridItem[]>(() => {
+    try { return normalizeDiscoverGridLayout(JSON.parse(window.localStorage.getItem(`seenary.discover-grid-${userId}`) ?? '[]')); }
+    catch { return []; }
+  });
+  function saveDiscoverGridLayout(layout: DiscoverGridItem[]) {
+    const normalized = normalizeDiscoverGridLayout(layout);
+    setDiscoverGridLayout(normalized);
+    window.localStorage.setItem(`seenary.discover-grid-${userId}`, JSON.stringify(normalized));
+    const result = window.desktopConfig?.setLayoutOrders(userId, { discoverGridLayout: normalized });
+    if (result && !result.ok) console.warn(result.message || 'Failed to save Discover sizes.');
+  }
+  useEffect(() => {
+    try { setDiscoverGridLayout(normalizeDiscoverGridLayout(JSON.parse(window.localStorage.getItem(`seenary.discover-grid-${userId}`) ?? '[]'))); }
+    catch { setDiscoverGridLayout([]); }
+  }, [userId]);
   const discoverLayoutOrderRef = useRef(discoverLayoutOrder);
   const [isEditingDiscoverLayout, setIsEditingDiscoverLayout] = useState(false);
   const [draggedDiscoverSectionId, setDraggedDiscoverSectionId] = useState<string | null>(null);
@@ -804,6 +820,15 @@ export function HomePage({
           missingLayouts.mangaPersonalLayoutOrder = mangaPersonalLayoutOrderRef.current;
         }
 
+        if (result.discoverHiddenSections) {
+          setDiscoverHiddenSections(result.discoverHiddenSections);
+          window.localStorage.setItem(`seenary.discover-hidden-${userId}`, JSON.stringify(result.discoverHiddenSections));
+        }
+        if (result.discoverGridLayout) {
+          const sizes = normalizeDiscoverGridLayout(result.discoverGridLayout);
+          setDiscoverGridLayout(sizes);
+          window.localStorage.setItem(`seenary.discover-grid-${userId}`, JSON.stringify(sizes));
+        }
         if (result.discoverLayoutOrder) {
           const order = result.discoverLayoutOrder.filter(
             (sectionId): sectionId is string => typeof sectionId === "string"
@@ -935,6 +960,8 @@ export function HomePage({
   function handleResetDiscoverLayout() {
     const defaultOrder = getDefaultDiscoverLayoutOrder(discoverShelves);
     saveDiscoverLayoutOrder(defaultOrder);
+    saveDiscoverGridLayout([]);
+    saveDiscoverHiddenSections([]);
     setDraggedDiscoverSectionId(null);
   }
 
@@ -1059,6 +1086,12 @@ export function HomePage({
     );
   }
 
+  function handlePersonalGridVisibility(widgetId: PersonalGridWidgetId) {
+    updatePersonalGridLayout((current) => current.map((item) =>
+      item.id === widgetId ? { ...item, hidden: !item.hidden } : item
+    ));
+  }
+
   function handlePersonalGridOrientation(widgetId: PersonalGridWidgetId) {
     if (!PERSONAL_GRID_SHELF_IDS.has(widgetId)) return;
 
@@ -1066,22 +1099,7 @@ export function HomePage({
       current.map((item) => {
         if (item.id !== widgetId) return item;
         const orientation = item.orientation === "vertical" ? "horizontal" : "vertical";
-        if (item.id === "stats") {
-          return orientation === "vertical"
-            ? { ...item, orientation, columns: Math.min(item.columns, 4), rows: 5 }
-            : { ...item, orientation, columns: Math.max(item.columns, 10), rows: 2 };
-        }
-        const columns =
-          orientation === "vertical" && item.columns > 6
-            ? 6
-            : orientation === "horizontal" && item.columns < 6
-              ? 6
-              : item.columns;
-        const rows =
-          orientation === "vertical"
-            ? Math.max(item.rows, 7)
-            : PERSONAL_GRID_HORIZONTAL_ROWS[item.id] ?? 5;
-        return { ...item, orientation, columns, rows };
+        return { ...item, orientation };
       })
     );
   }
@@ -1089,7 +1107,10 @@ export function HomePage({
   function handlePersonalGridMove(widgetId: PersonalGridWidgetId, direction: -1 | 1) {
     updatePersonalGridLayout((current) => {
       const currentIndex = current.findIndex((item) => item.id === widgetId);
-      const targetIndex = currentIndex + direction;
+      let targetIndex = currentIndex + direction;
+      while (targetIndex >= 0 && targetIndex < current.length && current[targetIndex].hidden) {
+        targetIndex += direction;
+      }
       if (currentIndex < 0 || targetIndex < 0 || targetIndex >= current.length) {
         return current;
       }
@@ -1818,12 +1839,6 @@ export function HomePage({
       }),
     [favoriteRecommendationsByAnimeId, trackedEntries]
   );
-  const favoriteBasedRecommendations = useMemo(
-    () => buildPersonalizedRecommendations(recommendationReadyEntries, titleLanguage, {
-      favoriteSourcesOnly: true,
-    }),
-    [recommendationReadyEntries, titleLanguage]
-  );
   const recommendationReadyMangaEntries = useMemo(
     () =>
       trackedMangaEntries.map((entry) => ({
@@ -1833,14 +1848,6 @@ export function HomePage({
           favoriteRecommendationsByMangaId[entry.manga_id] ?? entry.recommendations ?? [],
       })) as unknown as TrackedAnimeEntry[],
     [favoriteRecommendationsByMangaId, trackedMangaEntries]
-  );
-  const favoriteBasedMangaRecommendations = useMemo(
-    () =>
-      buildPersonalizedRecommendations(recommendationReadyMangaEntries, titleLanguage, {
-        favoriteSourcesOnly: true,
-        mediaType: "MANGA",
-      }),
-    [recommendationReadyMangaEntries, titleLanguage]
   );
   const trackedAnimeIds = useMemo(
     () => new Set(trackedEntries.map((entry) => entry.anime_id)),
@@ -1983,7 +1990,8 @@ export function HomePage({
     },
     sinceLiked: (item) => (
       <SinceYouLikedSection
-        entries={favoriteBasedRecommendations}
+        key={`since-liked-anime-${userId}`}
+        entries={recommendationReadyEntries}
         onSelectMedia={handleSelectAnimeFromHome}
         titleLanguage={titleLanguage}
         mediaType="ANIME"
@@ -2025,6 +2033,7 @@ export function HomePage({
   const discoverLayoutSections: Record<string, ReactNode> = {
     [DISCOVER_PRESETS_LAYOUT_ID]: (
       <DiscoverPresetPanel
+        hideAdultContent={hideAdultContent}
         mediaType={mediaType}
         disabled={isEditingDiscoverLayout}
         onSelect={handleOpenDiscoverShelf}
@@ -2125,7 +2134,8 @@ export function HomePage({
         {activeHomeTab === "personal" && mediaType === "MANGA" ? (
           <MangaHomePreview
             entries={trackedMangaEntries}
-            recommendations={favoriteBasedMangaRecommendations}
+            key={`manga-home-${userId}`}
+            recommendations={recommendationReadyMangaEntries}
             gridLayout={mangaPersonalGridLayout}
             isEditingLayout={isEditingPersonalLayout}
             selectedWidget={selectedMangaPersonalGridWidget}
@@ -2140,6 +2150,7 @@ export function HomePage({
             onSelectWidget={setSelectedMangaPersonalGridWidget}
             onMoveWidget={handlePersonalGridMove}
             onResizeWidget={handlePersonalGridResize}
+            onToggleVisibility={handlePersonalGridVisibility}
             onToggleOrientation={handlePersonalGridOrientation}
             onDragStart={handlePersonalGridDragStart}
             onDragOver={handlePersonalGridDragOver}
@@ -2169,7 +2180,8 @@ export function HomePage({
                 onSelectWidget={setSelectedPersonalGridWidget}
                 onMoveWidget={handlePersonalGridMove}
                 onResizeWidget={handlePersonalGridResize}
-                onToggleOrientation={handlePersonalGridOrientation}
+                onToggleVisibility={handlePersonalGridVisibility}
+            onToggleOrientation={handlePersonalGridOrientation}
                 onDragStart={handlePersonalGridDragStart}
                 onDragOver={handlePersonalGridDragOver}
                 onDragEnd={handlePersonalGridDragEnd}
@@ -2226,10 +2238,25 @@ export function HomePage({
                   />
                 )}
 
-                {visibleDiscoverLayoutOrder.map((sectionId) => (
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+                {isEditingDiscoverLayout && visibleDiscoverLayoutOrder.some((id) => discoverHiddenSections.includes(id)) && (
+                  <div className="col-span-full flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 p-3">
+                    <span className="text-sm text-white/60">Add shelves:</span>
+                    {visibleDiscoverLayoutOrder.filter((id) => discoverHiddenSections.includes(id)).map((id) => (
+                      <button key={id} type="button" onClick={() => saveDiscoverHiddenSections(discoverHiddenSections.filter((hidden) => hidden !== id))}
+                        className="rounded-xl bg-white/10 px-3 py-2 text-sm text-white hover:bg-white/20">
+                        + {id === DISCOVER_PRESETS_LAYOUT_ID ? 'Discovery presets' : id === DISCOVER_CAROUSEL_LAYOUT_ID ? 'Trending carousel' : discoverShelvesById.get(id)?.title ?? 'Discover shelf'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {visibleDiscoverLayoutOrder.filter((id) => !discoverHiddenSections.includes(id)).map((sectionId) => (
                   <LayoutEditBlock
                     key={sectionId}
                     sectionId={sectionId}
+                    onRemove={() => saveDiscoverHiddenSections([...discoverHiddenSections, sectionId])}
+                    size={discoverGridLayout.find((item) => item.id === sectionId)}
+                    onResize={(columns, rows) => saveDiscoverGridLayout([...discoverGridLayout.filter((item) => item.id !== sectionId), { id: sectionId, columns, rows }])}
                     label={
                       sectionId === DISCOVER_PRESETS_LAYOUT_ID
                         ? "Discovery presets"
@@ -2246,6 +2273,7 @@ export function HomePage({
                     {discoverLayoutSections[sectionId]}
                   </LayoutEditBlock>
                 ))}
+                </div>
               </>
             ) : (
               <DiscoverLoadError
@@ -2414,7 +2442,7 @@ function RecentActivityCard({
         onClick={onSelect}
         className="flex w-full items-center gap-3 p-3 pr-11 text-left focus:outline-none"
       >
-        <div className="h-20 w-14 shrink-0 overflow-hidden rounded-2xl bg-white/5">
+        <div className="h-24 w-16 shrink-0 overflow-hidden rounded-2xl bg-white/5">
           {entry.coverImage ? (
             <img
               src={entry.coverImage}
@@ -2473,6 +2501,7 @@ function MangaHomePreview({
   onSelectWidget,
   onMoveWidget,
   onResizeWidget,
+  onToggleVisibility,
   onToggleOrientation,
   onDragStart,
   onDragOver,
@@ -2481,7 +2510,7 @@ function MangaHomePreview({
   autoScroll,
 }: {
   entries: TrackedMangaEntry[];
-  recommendations: RecommendationCandidate[];
+  recommendations: TrackedAnimeEntry[];
   recentActivity: RecentMediaHistoryEntry[];
   gridLayout: PersonalGridItem[];
   isEditingLayout: boolean;
@@ -2500,6 +2529,7 @@ function MangaHomePreview({
     columns: number,
     rows: number
   ) => void;
+  onToggleVisibility: (widgetId: PersonalGridWidgetId) => void;
   onToggleOrientation: (widgetId: PersonalGridWidgetId) => void;
   onDragStart: (widgetId: PersonalGridWidgetId, event: DragEvent<HTMLDivElement>) => void;
   onDragOver: (widgetId: PersonalGridWidgetId, event: DragEvent<HTMLDivElement>) => void;
@@ -2649,6 +2679,7 @@ function MangaHomePreview({
           onSelectWidget={onSelectWidget}
           onMoveWidget={onMoveWidget}
           onResizeWidget={onResizeWidget}
+          onToggleVisibility={onToggleVisibility}
           onToggleOrientation={onToggleOrientation}
           onDragStart={onDragStart}
           onDragOver={onDragOver}
@@ -2911,6 +2942,7 @@ function PersonalGridDashboard({
   onSelectWidget,
   onMoveWidget,
   onResizeWidget,
+  onToggleVisibility,
   onToggleOrientation,
   onDragStart,
   onDragOver,
@@ -2929,6 +2961,7 @@ function PersonalGridDashboard({
     columns: number,
     rows: number
   ) => void;
+  onToggleVisibility: (widgetId: PersonalGridWidgetId) => void;
   onToggleOrientation: (widgetId: PersonalGridWidgetId) => void;
   onDragStart: (widgetId: PersonalGridWidgetId, event: DragEvent<HTMLDivElement>) => void;
   onDragOver: (widgetId: PersonalGridWidgetId, event: DragEvent<HTMLDivElement>) => void;
@@ -3018,37 +3051,18 @@ function PersonalGridDashboard({
 
     event.preventDefault();
     event.stopPropagation();
-    const constraints = PERSONAL_GRID_CONSTRAINTS[session.widgetId];
-    const isShelf = PERSONAL_GRID_SHELF_IDS.has(session.widgetId);
-    const minColumns =
-      session.widgetId === "stats" && session.orientation !== "vertical"
-        ? Math.max(10, constraints.minColumns)
-        : isShelf && session.orientation !== "vertical"
-        ? Math.max(6, constraints.minColumns)
-        : constraints.minColumns;
-    const minRows =
-      isShelf && session.widgetId !== "stats" && session.orientation === "vertical"
-        ? Math.max(7, constraints.minRows)
-        : constraints.minRows;
-    const maxRows =
-      isShelf && session.orientation !== "vertical"
-        ? (PERSONAL_GRID_HORIZONTAL_ROWS[session.widgetId] ?? constraints.maxRows)
-        : constraints.maxRows;
     const columns = Math.max(
-      minColumns,
+      1,
       Math.min(
-        constraints.maxColumns,
+        12,
         session.startColumns +
           Math.round((event.clientX - session.startX) / session.columnStep)
       )
     );
     const rows = Math.max(
-      minRows,
-      Math.min(
-        maxRows,
-        session.startRows +
-          Math.round((event.clientY - session.startY) / session.rowStep)
-      )
+      1,
+      session.startRows +
+        Math.round((event.clientY - session.startY) / session.rowStep)
     );
 
     onResizeWidget(session.widgetId, columns, rows);
@@ -3080,7 +3094,18 @@ function PersonalGridDashboard({
           : {}),
       }}
     >
-      {layout.map((item, index) => {
+      {isEditing && layout.some((item) => item.hidden) && (
+        <div className="col-span-full flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 p-3">
+          <span className="text-sm text-white/60">Add shelves:</span>
+          {layout.filter((item) => item.hidden).map((item) => (
+            <button key={item.id} type="button" onClick={() => onToggleVisibility(item.id)}
+              className="rounded-xl bg-white/10 px-3 py-2 text-sm text-white hover:bg-white/20">
+              + {widgetLabels[item.id]}
+            </button>
+          ))}
+        </div>
+      )}
+      {layout.filter((item) => !item.hidden).map((item, index, visibleLayout) => {
         const selected = selectedWidget === item.id;
         const isShelf = PERSONAL_GRID_SHELF_IDS.has(item.id);
         const usesAutomaticHeight = item.id === "sinceLiked" && !isEditing;
@@ -3134,11 +3159,16 @@ function PersonalGridDashboard({
                     <button
                       type="button"
                       onClick={() => onMoveWidget(item.id, 1)}
-                      disabled={index === layout.length - 1}
+                      disabled={index === visibleLayout.length - 1}
                       aria-label={`Move ${PERSONAL_GRID_WIDGET_LABELS[item.id]} later`}
                       className="grid h-8 w-8 place-items-center rounded-xl text-white/55 transition hover:bg-white/10 hover:text-white disabled:opacity-25"
                     >
                       <ArrowRightIcon className="h-4 w-4" />
+                    </button>
+                    <button type="button" onClick={() => onToggleVisibility(item.id)}
+                      aria-label={`Remove ${widgetLabels[item.id]}`}
+                      className="h-8 rounded-xl px-2.5 text-xs text-white/60 hover:bg-white/10 hover:text-white">
+                      Remove
                     </button>
                     <span className="mx-0.5 h-5 w-px bg-white/10" />
                     <span className="min-w-12 text-center text-[0.65rem] font-semibold text-white/45">
@@ -3236,6 +3266,9 @@ function HomeLayoutToolbar({
 }
 
 function LayoutEditBlock({
+  onRemove,
+  size,
+  onResize,
   sectionId,
   label,
   isEditing,
@@ -3245,6 +3278,9 @@ function LayoutEditBlock({
   onDragEnd,
   children,
 }: {
+  onRemove?: () => void;
+  size?: DiscoverGridItem;
+  onResize?: (columns: number, rows: number) => void;
   sectionId: string;
   label: string;
   isEditing: boolean;
@@ -3254,7 +3290,36 @@ function LayoutEditBlock({
   onDragEnd: () => void;
   children: ReactNode;
 }) {
-  return <ReorderableSection id={sectionId} label={label} isEditing={isEditing} isDragging={isDragging} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>{children}</ReorderableSection>;
+  const container = useRef<HTMLDivElement>(null);
+  const session = useRef<{ x: number; y: number; columns: number; rows: number; step: number } | null>(null);
+  return (
+    <div ref={container} className={`relative min-w-0 ${onResize ? 'discover-grid-widget' : ''} ${size ? 'discover-sized-widget overflow-hidden' : ''}`}
+      style={onResize ? { '--discover-columns': size?.columns ?? 12, ...(size ? { '--discover-height': `${size.rows * 76 - 16}px` } : {}) } as React.CSSProperties : undefined}>
+      <ReorderableSection id={sectionId} label={label} isEditing={isEditing} isDragging={isDragging} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>{children}</ReorderableSection>
+      {isEditing && onResize && (
+        <div className="absolute bottom-2 right-2 z-20 flex items-center gap-2 rounded-xl border border-white/15 bg-[#151515] p-2 text-xs text-white/70" onDragStart={(event) => event.preventDefault()}>
+          {onRemove && <button type="button" onClick={onRemove} aria-label={`Remove ${label}`} className="rounded-lg px-2 py-1 hover:bg-white/10">Remove</button>}
+          <label>Width <input aria-label={`${label} width`} type="number" min={1} max={12} value={size?.columns ?? 12} className="w-10 bg-transparent" onChange={(event) => { const n = Number(event.target.value); if (Number.isFinite(n)) onResize(Math.max(1, Math.min(12, Math.round(n))), size?.rows ?? Math.max(1, Math.round(((container.current?.clientHeight ?? 440) + 16) / 76))); }} /></label>
+          <label>Height <input aria-label={`${label} height`} type="number" min={1} value={size?.rows ?? Math.max(1, Math.round(((container.current?.clientHeight ?? 440) + 16) / 76))} className="w-10 bg-transparent" onChange={(event) => { const n = Number(event.target.value); if (Number.isFinite(n)) onResize(size?.columns ?? 12, Math.max(1, Math.round(n))); }} /></label>
+          <button type="button" draggable={false} aria-label={`Resize ${label}`} className="cursor-nwse-resize touch-none rounded-lg px-2 py-1 hover:bg-white/10"
+            onPointerDown={(event) => {
+              event.preventDefault(); event.stopPropagation();
+              const box = container.current!;
+              const grid = box.parentElement!;
+              const gap = parseFloat(getComputedStyle(grid).columnGap) || 16;
+              session.current = { x: event.clientX, y: event.clientY, columns: size?.columns ?? 12, rows: size?.rows ?? Math.max(1, Math.round((box.clientHeight + 16) / 76)), step: (grid.clientWidth + gap) / 12 };
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              const start = session.current; if (!start) return;
+              onResize(Math.max(1, Math.min(12, start.columns + Math.round((event.clientX - start.x) / start.step))), Math.max(1, start.rows + Math.round((event.clientY - start.y) / 76)));
+            }}
+            onPointerUp={(event) => { session.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
+            onPointerCancel={() => { session.current = null; }}>?</button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function AccountOverviewPanel({
@@ -3385,16 +3450,28 @@ function OverviewMetric({
 
 function DiscoverPresetPanel({
   mediaType,
+  hideAdultContent,
   disabled,
   onSelect,
   onOpenCalendar,
 }: {
   mediaType: MediaType;
+  hideAdultContent: boolean;
   disabled: boolean;
   onSelect: (shelf: DiscoverShelf) => void;
   onOpenCalendar: () => void;
 }) {
   const kind = mediaType === "MANGA" ? "manga" : "anime";
+  const currentYear = new Date().getFullYear();
+  const [browseYears, setBrowseYears] = useState<string[]>([]);
+  const [browseSeason, setBrowseSeason] = useState("any");
+  const [browseStatus, setBrowseStatus] = useState("any");
+  useEffect(() => { setBrowseYears([]); setBrowseSeason('any'); setBrowseStatus('any'); }, [mediaType]);
+  const [genres, setGenres] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
+  const [genreMode, setGenreMode] = useState<'all' | 'any'>('all');
+  const [tagMode, setTagMode] = useState<'all' | 'any'>('all');
+  useEffect(() => { if (hideAdultContent) { setGenres(current => current.filter(name => name !== 'Hentai')); setTags([]); } }, [hideAdultContent]);
   const browsePresets = [
     {
       id: "browse-complete",
@@ -3437,7 +3514,7 @@ function DiscoverPresetPanel({
         <div>
           <h2 className="text-base font-semibold text-white/90">Find your next {kind}</h2>
           <p className="mt-1 text-xs leading-5 text-white/42">
-            Pick a genre or a way to browse. Each preset opens a complete, paginated collection.
+            Choose genres and tags{mediaType === "ANIME" ? ", year, and season" : ", publication year, and publishing status"}, then Browse. Match rules apply within each filter section.
           </p>
         </div>
         </div>
@@ -3452,28 +3529,35 @@ function DiscoverPresetPanel({
         </button>
       </div>
 
-      <div className="mt-5">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/30">Genres</p>
-        <div className="mt-2.5 flex flex-wrap gap-2">
-          {DISCOVER_GENRE_PRESETS.map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              disabled={disabled}
-              onClick={() => onSelect({
-                id,
-                title: `${label} ${mediaType === "MANGA" ? "Manga" : "Anime"}`,
-                description: `Popular ${label.toLowerCase()} ${kind} from across AniList.`,
-                pills: [label, "Popularity"],
-                items: [],
-              })}
-              className="rounded-full border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs font-medium text-white/62 transition hover:-translate-y-0.5 hover:border-(--app-accent)/35 hover:bg-(--app-accent-soft) hover:text-white focus:outline-none focus:ring-2 focus:ring-(--app-accent)/55 disabled:cursor-default disabled:opacity-35 disabled:hover:translate-y-0"
-            >
-              {label}
-            </button>
-          ))}
+      <form className="mt-5 rounded-2xl border border-white/9 bg-black/15 p-3"
+        onSubmit={event => {
+          event.preventDefault();
+          if (disabled) return;
+          const filters = { genres, genreMode, tags, tagMode, years: browseYears.map(Number), season: mediaType === 'ANIME' ? browseSeason : 'any', status: mediaType === 'MANGA' ? browseStatus : 'any' };
+          onSelect({ id: createBrowseShelfId(filters), title: 'Browse ' + (mediaType === 'MANGA' ? 'Manga' : 'Anime'),
+            description: 'Titles matching your selected filters.',
+            pills: [genres.length ? genres.length + ' genres' : 'All genres', tags.length ? tags.length + ' tags' : 'All tags', filters.years.length ? filters.years.join(', ') : 'All years', ...(mediaType === 'MANGA' ? [browseStatus === 'any' ? 'All statuses' : ({RELEASING:'Publishing',FINISHED:'Finished publishing',NOT_YET_RELEASED:'Not yet published',HIATUS:'On hiatus',CANCELLED:'Cancelled'} as Record<string,string>)[browseStatus]] : [])],
+            items: [] });
+        }}>
+        <div className="flex flex-wrap items-end gap-3">
+          <>
+            <DiscoverPeriodSelect label={mediaType === 'MANGA' ? 'Publication year' : 'Year'} anyLabel="All years" multiple selected={browseYears} onChange={setBrowseYears} disabled={disabled}
+              options={Array.from({ length: currentYear + 2 - 1900 + 1 }, (_, index) => String(currentYear + 2 - index)).map(year => ({ value: year, label: year }))} />
+            {mediaType === 'ANIME' ? <DiscoverPeriodSelect label="Season" anyLabel="All seasons" selected={browseSeason === 'any' ? [] : [browseSeason]}
+              onChange={values => setBrowseSeason(values[0] ?? 'any')} disabled={disabled}
+              options={['winter','spring','summer','fall'].map(season => ({value:season,label:formatEnum(season)}))} />
+            : <DiscoverPeriodSelect label="Publishing status" anyLabel="All statuses" selected={browseStatus === 'any' ? [] : [browseStatus]} onChange={values => setBrowseStatus(values[0] ?? 'any')} disabled={disabled}
+              options={[{value:'RELEASING',label:'Publishing'},{value:'FINISHED',label:'Finished publishing'},{value:'NOT_YET_RELEASED',label:'Not yet published'},{value:'HIATUS',label:'On hiatus'},{value:'CANCELLED',label:'Cancelled'}]} />}
+          </>
+          <button type="submit" tabIndex={-1} disabled={disabled} className="inline-flex items-center gap-2 rounded-xl bg-(--app-accent) px-4 py-2.5 text-sm font-semibold text-black transition-colors hover:brightness-110 focus:outline-none disabled:opacity-35">
+            <MagnifyingGlassIcon aria-hidden="true" className="h-4 w-4" />Browse
+          </button>
         </div>
-      </div>
+        <DiscoverGenres key={'genres:' + hideAdultContent} initialGenres={DISCOVER_GENRE_PRESETS.map(([, name]) => name)} hideAdultContent={hideAdultContent} disabled={disabled}
+          selected={genres} onChange={setGenres} mode={genreMode} onModeChange={setGenreMode} />
+        <DiscoverGenres key={'tags:' + hideAdultContent} kind="tags" initialGenres={[]} hideAdultContent={hideAdultContent} disabled={disabled}
+          selected={tags} onChange={setTags} mode={tagMode} onModeChange={setTagMode} />
+      </form>
 
       <div className="mt-5 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
         {browsePresets.map((preset) => {
@@ -3498,6 +3582,72 @@ function DiscoverPresetPanel({
         })}
       </div>
     </section>
+  );
+}
+
+function DiscoverPeriodSelect({ label, anyLabel, selected, options, onChange, disabled, multiple = false }: {
+  label: string;
+  anyLabel: string;
+  selected: string[];
+  options: { value: string; label: string }[];
+  onChange: (values: string[]) => void;
+  disabled: boolean;
+  multiple?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const summary = selected.length === 0 ? anyLabel : options.filter(option => selected.includes(option.value)).map(option => option.label).join(", ");
+
+  useEffect(() => {
+    if (!open) return;
+    function closeOutside(event: PointerEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [open]);
+
+  return (
+    <div ref={containerRef} className="relative min-w-32 flex-1" onBlur={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+    }} onKeyDown={(event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    }}>
+      <span className="block text-xs text-white/45">{label}</span>
+      <button ref={triggerRef} type="button" disabled={disabled} aria-label={`${label}: ${summary}`} aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen(current => !current)} className={`mt-2 flex w-full items-center justify-between gap-3 rounded-xl border bg-[#1b1b1b] px-3 py-2.5 text-sm text-white/80 outline-none transition focus-visible:ring-2 focus-visible:ring-(--app-accent)/55 disabled:opacity-35 ${open ? "border-(--app-accent) shadow-[0_0_0_3px_var(--app-accent-soft)]" : "border-white/10 hover:border-white/20 hover:bg-white/[0.055]"}`}>
+        <span className="truncate">{summary}</span>
+        <ChevronDownIcon aria-hidden="true" className={`h-4 w-4 shrink-0 text-white/40 transition ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && !disabled && (
+        <div role="dialog" aria-label={`Choose ${label.toLowerCase()}`} className="absolute left-0 top-full z-50 mt-2 w-full overflow-hidden rounded-2xl border border-white/12 bg-[#181818] p-3 shadow-[0_24px_60px_rgba(0,0,0,0.7)]">
+          <button type="button" aria-pressed={selected.length === 0} onClick={() => { onChange([]); if (!multiple) { setOpen(false); triggerRef.current?.focus(); } }} className={`mb-3 w-full rounded-xl border px-3 py-2 text-left text-xs transition ${selected.length === 0 ? "border-(--app-accent)/50 bg-(--app-accent-soft) text-white" : "border-white/10 text-white/50 hover:bg-white/[0.06] hover:text-white"}`}>
+            {anyLabel}
+          </button>
+          {multiple && <p className="mb-3 text-[11px] text-white/35">Select one or more years.</p>}
+          <div className={`scroll-container max-h-64 overflow-y-auto ${multiple ? "grid grid-cols-[repeat(auto-fit,minmax(3.5rem,1fr))] gap-2" : "space-y-1"}`}>
+            {options.map(option => {
+              const active = selected.includes(option.value);
+              return (
+                <button key={option.value} type="button" aria-pressed={active} onClick={() => {
+                  onChange(multiple ? active ? selected.filter(value => value !== option.value) : [...selected, option.value] : [option.value]);
+                  if (!multiple) { setOpen(false); triggerRef.current?.focus(); }
+                }} className={`flex items-center justify-center gap-2 rounded-xl border px-2 py-2.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--app-accent) ${multiple ? "" : "w-full justify-between px-3"} ${active ? "border-(--app-accent)/60 bg-(--app-accent-soft) text-white" : "border-white/8 bg-white/[0.025] text-white/50 hover:border-white/20 hover:bg-white/[0.06] hover:text-white"}`}>
+                  {option.label}
+                  {!multiple && active && <CheckIcon aria-hidden="true" className="h-4 w-4 text-(--app-accent)" />}
+                </button>
+              );
+            })}
+          </div>
+          {multiple && <button type="button" onClick={() => { setOpen(false); triggerRef.current?.focus(); }} className="mt-3 w-full rounded-xl bg-(--app-accent) px-3 py-2 text-xs font-semibold text-black transition hover:brightness-110">Done{selected.length > 0 ? ` (${selected.length} selected)` : ""}</button>}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3548,16 +3698,16 @@ function ReleaseCalendarModal({
     let cancelled = false;
     setLoading(true);
     setError(null);
-    void window.api
-      .getReleaseCalendar(
+    setResult(null);
+    void loadCalendarPages(
+      page => window.api.getReleaseCalendar(
         Math.floor(weekStart.getTime() / 1000),
         Math.floor(weekEnd.getTime() / 1000),
-        hideAdultContent,
-        mediaType
-      )
-      .then((next) => {
-        if (!cancelled) setResult(next);
-      })
+        hideAdultContent, mediaType, page
+      ),
+      next => { if (!cancelled) setResult(next); },
+      () => cancelled
+    )
       .catch((reason) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "The release calendar could not load.");
       })
@@ -3624,14 +3774,16 @@ function ReleaseCalendarModal({
       </div>
 
       <div className="scroll-container min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 [scrollbar-gutter:stable]">
-        {loading ? (
+        {loading && !result?.items.length ? (
           <div className="flex h-full min-h-64 items-center justify-center gap-3 text-sm text-white/45">
             <ArrowPathIcon className="h-5 w-5 animate-spin" /> Loading this week…
           </div>
-        ) : error ? (
+        ) : error && !result?.items.length ? (
           <AsyncStatePanel icon={ExclamationTriangleIcon} title="Calendar unavailable" message={error} />
         ) : (
           <div className="space-y-4">
+            {loading && <p role="status" className="flex items-center gap-2 text-xs text-white/45"><ArrowPathIcon className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />Fetching releases ? {result?.items.length ?? 0} found. The list updates as more arrive.</p>}
+            {error && <p role="status" className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-xs text-amber-100">Some releases could not load. Showing the entries already fetched.</p>}
             {result?.warning && <p className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-xs text-amber-100">{result.warning}</p>}
             {days.map(({ date, items }) => {
               const dayKey = date.toISOString();
@@ -3696,7 +3848,7 @@ function ReleaseCalendarModal({
                     })}
                   </div>
                 ) : (
-                  <p className="rounded-xl border border-dashed border-white/8 px-3 py-4 text-xs text-white/28">No known releases.</p>
+                  <p className="rounded-xl border border-dashed border-white/8 px-3 py-4 text-xs text-white/28">{loading ? "Still fetching releases?" : "No known releases."}</p>
                 )}
                     </div>
                   </div>
@@ -4562,7 +4714,7 @@ function TutorialPreview({ step }: { step: number }) {
         <div className="flex w-full items-center gap-2 rounded-2xl border border-white/10 bg-white/6 px-3 py-2 shadow-lg">
           <MagnifyingGlassIcon className="h-5 w-5 shrink-0 text-white/45" />
           <span className="min-w-0 flex-1 truncate text-sm text-white/35">
-            Search titles, characters, studios, or music...
+            Search titles, genres, tags, characters, studios, or music...
           </span>
           <kbd className="rounded-lg border border-white/10 bg-white/[0.06] px-2 py-1 text-[10px] font-medium tracking-wide text-white/38">
             Enter
@@ -5385,13 +5537,34 @@ function SinceYouLikedSection({
   mediaType,
   maxItems = 4,
 }: {
-  entries: RecommendationCandidate[];
+  entries: TrackedAnimeEntry[];
   onSelectMedia: (mediaId: number) => void;
   titleLanguage: TitleLanguage;
   mediaType: MediaType;
   maxItems?: number;
 }) {
   const isManga = mediaType === "MANGA";
+  const pairs = useMemo(() => {
+    const unique = new Map<string, { sourceMediaId: number; recommendedMediaId: number }>();
+    for (const source of entries.filter(entry => entry.is_favorite && entry.status !== 'dropped')) {
+      for (const item of source.recommendations ?? []) {
+        const media = item.mediaRecommendation;
+        // Older anime cache records predate the recommendation type field.
+        if (!media?.id || (media.type ?? 'ANIME') !== mediaType) continue;
+        const pair = { sourceMediaId: source.anime_id, recommendedMediaId: media.id };
+        unique.set(recommendationPairKey(pair), pair);
+      }
+    }
+    return [...unique.values()].sort((a, b) => a.sourceMediaId - b.sourceMediaId || a.recommendedMediaId - b.recommendedMediaId);
+  }, [entries, mediaType]);
+  const feedback = useSinceYouLiked(mediaType, pairs, JSON.stringify(entries.map(entry => [entry.anime_id, entry.status, entry.updated_at])));
+  const [lastHidden, setLastHidden] = useState<number | null>(null);
+  const recommendations = buildPersonalizedRecommendations(entries, titleLanguage, {
+    favoriteSourcesOnly: true, mediaType, feedback: feedback.state, hiddenIds: feedback.hiddenIds, retainedIds: feedback.retainedIds,
+  });
+  const visibleSignature = JSON.stringify(recommendations.slice(0, maxItems).map(entry => ({ sourceMediaId: entry.source.animeId, recommendedMediaId: entry.animeId })));
+  const trackVisible = feedback.track;
+  useEffect(() => { if (feedback.loaded) void trackVisible(JSON.parse(visibleSignature)); }, [feedback.loaded, feedback.state, visibleSignature, trackVisible]);
 
   return (
     <section>
@@ -5404,25 +5577,46 @@ function SinceYouLikedSection({
           <p className="text-sm text-white/40">
             Personal next-{isManga ? "read" : "watch"} suggestions built from your favorites.
           </p>
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-white/35">
+            Suggestions stay while you {isManga ? "read" : "watch"}. After completion, you have 24 hours to react before a like is added automatically. Dropped titles become Not Interested.
+          </p>
         </div>
       </div>
 
-      {entries.length ? (
+      {feedback.error && (
+        <p role="alert" className="mb-3 text-sm text-amber-200">{feedback.error}{' '}
+          <button type="button" className="underline" onClick={feedback.retry}>Retry</button>
+        </p>
+      )}
+      {lastHidden !== null && feedback.hiddenIds.has(lastHidden) && (
+        <p role="status" className="mb-3 text-sm text-white/60">Hidden from Since You Liked.{' '}
+          <button type="button" className="text-white underline disabled:opacity-40" disabled={feedback.pending.has(`hide:${lastHidden}`)} onClick={() => feedback.hide(lastHidden, false)}>Undo</button>
+        </p>
+      )}
+      {!feedback.loaded ? (
+        <p role="status" className="py-8 text-sm text-white/45">Loading your recommendation choices…</p>
+      ) : recommendations.length ? (
         <div className="space-y-3">
-          {entries.slice(0, maxItems).map((entry) => (
+          {recommendations.slice(0, maxItems).map((entry) => (
             <SinceYouLikedPairCard
               key={`since-you-liked-${entry.animeId}`}
               entry={entry}
               onSelectMedia={onSelectMedia}
               titleLanguage={titleLanguage}
               mediaType={mediaType}
+              feedback={feedback.vote({ sourceMediaId: entry.source.animeId, recommendedMediaId: entry.animeId })}
+              reactionPending={feedback.pending.has(`${entry.source.animeId}:${entry.animeId}`)}
+              addPending={feedback.pending.has(`add:${entry.animeId}`)}
+              inLibrary={entries.some(item => item.anime_id === entry.animeId) || feedback.addedIds.has(entry.animeId)}
+              onFeedback={(value) => feedback.feedback({ sourceMediaId: entry.source.animeId, recommendedMediaId: entry.animeId }, value)}
+              onHide={() => { setLastHidden(entry.animeId); feedback.hide(entry.animeId, true); }}
+              onAdd={() => feedback.add(entry.animeId)}
             />
           ))}
         </div>
       ) : (
         <div className="rounded-3xl border border-dashed border-white/10 bg-white/3 px-5 py-8 text-sm text-white/45">
-          Favorite a few {isManga ? "Manga" : "shows"} you liked to get more personal
-          next-{isManga ? "read" : "watch"} suggestions.
+          {pairs.length ? 'No more suggestions from these favorites right now.' : `Favorite a few ${isManga ? 'Manga' : 'shows'} you liked to get more personal next-${isManga ? 'read' : 'watch'} suggestions.`}
         </div>
       )}
     </section>
@@ -5434,11 +5628,25 @@ function SinceYouLikedPairCard({
   onSelectMedia,
   titleLanguage,
   mediaType,
+  feedback,
+  reactionPending,
+  addPending,
+  inLibrary = false,
+  onFeedback,
+  onHide,
+  onAdd,
 }: {
   entry: RecommendationCandidate;
   onSelectMedia: (mediaId: number) => void;
   titleLanguage: TitleLanguage;
   mediaType: MediaType;
+  feedback: RecommendationFeedback;
+  reactionPending: boolean;
+  addPending: boolean;
+  inLibrary?: boolean;
+  onFeedback: (value: RecommendationFeedback) => void;
+  onHide: () => void;
+  onAdd: () => void;
 }) {
   const MediaIcon = mediaType === "MANGA" ? BookOpenIcon : TvIcon;
   const recommendedTitle = getPreferredTitle(entry.title, titleLanguage);
@@ -5497,12 +5705,9 @@ function SinceYouLikedPairCard({
           <ArrowRightIcon className="h-5 w-5" />
         </div>
 
-        <button
-          type="button"
-          onClick={() => onSelectMedia(entry.animeId)}
-          className="flex min-w-0 items-center gap-3.5 rounded-2xl border border-white/10 bg-white/3 p-3 text-left transition hover:bg-white/8"
-        >
-          <div className="h-28 w-20 shrink-0 overflow-hidden rounded-xl bg-white/5">
+        <div className="since-liked-card relative flex min-w-0 items-center gap-3.5 rounded-2xl border border-white/10 bg-white/3 p-3 text-left transition hover:bg-white/8">
+          <button type="button" aria-label={`Open ${recommendedTitle}`} onClick={() => onSelectMedia(entry.animeId)} className="absolute inset-0 rounded-2xl focus-visible:outline-2 focus-visible:outline-(--app-accent)" />
+          <div className="pointer-events-none h-28 w-20 shrink-0 overflow-hidden rounded-xl bg-white/5">
             {entry.coverImage?.large ? (
               <img
                 src={entry.coverImage.large}
@@ -5513,7 +5718,7 @@ function SinceYouLikedPairCard({
               <div className="h-full w-full bg-white/5" />
             )}
           </div>
-          <div className="min-w-0 flex-1">
+          <div className="pointer-events-none min-w-0 flex-1">
             <p className="text-xs uppercase tracking-[0.2em] text-white/35">
               Try next
             </p>
@@ -5521,22 +5726,39 @@ function SinceYouLikedPairCard({
               <h3 className="min-w-0 flex-1 truncate text-base font-semibold text-white">
                 {recommendedTitle}
               </h3>
-              <div className="flex shrink-0 flex-wrap gap-1.5">
-                {recommendedMeta.map((item) => (
-                  <SmallInfoPill
-                    key={`${entry.animeId}-${item}`}
-                    icon={item.startsWith("Avg ") ? StarIcon : MediaIcon}
-                  >
-                    {item}
-                  </SmallInfoPill>
-                ))}
+              <div className="since-liked-actions relative grid min-h-9 min-w-40 shrink-0 items-center">
+                <div className="since-liked-tags col-start-1 row-start-1 flex flex-wrap justify-end gap-1.5">
+                  {recommendedMeta.map((item) => (
+                    <SmallInfoPill
+                      key={`${entry.animeId}-${item}`}
+                      icon={item.startsWith("Avg ") ? StarIcon : MediaIcon}
+                    >
+                      {item}
+                    </SmallInfoPill>
+                  ))}
+                </div>
+                <div role="group" aria-label="Recommendation feedback" className="since-liked-controls pointer-events-auto z-10 col-start-1 row-start-1 flex justify-end gap-1.5">
+                  {[
+                    { label: inLibrary ? 'In Library' : addPending ? 'Adding to Library' : 'Add to Library', Icon: addPending ? ArrowPathIcon : PlusIcon, action: onAdd, disabled: addPending || inLibrary, active: false, reaction: false },
+                    { label: 'Not Interested — hide for me', Icon: NoSymbolIcon, action: onHide, disabled: false, active: false, reaction: false },
+                    { label: 'Like — good match for this favorite (shared feedback)', Icon: HandThumbUpIcon, action: () => onFeedback(feedback === 'like' ? null : 'like'), disabled: reactionPending, active: feedback === 'like', reaction: true },
+                    { label: 'Dislike — poor match for this favorite (shared feedback)', Icon: HandThumbDownIcon, action: () => onFeedback(feedback === 'dislike' ? null : 'dislike'), disabled: reactionPending, active: feedback === 'dislike', reaction: true },
+                  ].map(({ label, Icon, action, disabled, active, reaction }) => (
+                    <Tooltip key={reaction ? (Icon === HandThumbUpIcon ? 'like' : 'dislike') : Icon === NoSymbolIcon ? 'hide' : 'add'} content={label} placement="bottom" className="since-liked-action">
+                      <button type="button" aria-label={label} aria-pressed={reaction ? active : undefined} disabled={disabled} onClick={action}
+                        className={`flex h-8 w-8 items-center justify-center rounded-full border transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--app-accent) disabled:cursor-wait disabled:opacity-60 ${active ? 'border-(--app-accent) bg-(--app-accent-soft) text-(--app-accent)' : 'border-white/15 bg-[#202020] text-white/70 hover:border-white/40 hover:text-white'}`}>
+                        <Icon className={`h-4 w-4 ${Icon === ArrowPathIcon ? 'animate-spin motion-reduce:animate-none' : ''}`} />
+                      </button>
+                    </Tooltip>
+                  ))}
+                </div>
               </div>
             </div>
             <p className="mt-2.5 line-clamp-2 text-xs leading-5 text-white/50">
               {getRecommendationSummary(entry.description)}
             </p>
           </div>
-        </button>
+        </div>
       </div>
     </div>
   );
@@ -5708,9 +5930,10 @@ function getSmallInfoPillTone(tone: "neutral" | "sky" | "amber" | "violet" | "ro
 function buildPersonalizedRecommendations(
   entries: TrackedAnimeEntry[],
   titleLanguage: TitleLanguage,
-  options: { favoriteSourcesOnly?: boolean; mediaType?: MediaType } = {}
+  options: { favoriteSourcesOnly?: boolean; mediaType?: MediaType; feedback?: Record<string, RecommendationPairState>; hiddenIds?: Set<number>; retainedIds?: Set<number> } = {}
 ) {
   const libraryIds = new Set(entries.map((entry) => entry.anime_id));
+  const libraryById = new Map(entries.map(entry => [entry.anime_id, entry]));
   const sourceEntries = options.favoriteSourcesOnly
     ? entries.filter((entry) => Boolean(entry.is_favorite))
     : entries;
@@ -5725,14 +5948,18 @@ function buildPersonalizedRecommendations(
 
     for (const recommendation of entry.recommendations ?? []) {
       const media = recommendation.mediaRecommendation;
-      if (!media?.id || libraryIds.has(media.id)) continue;
-      if (options.mediaType && media.type !== options.mediaType) continue;
+      if (!media?.id || options.hiddenIds?.has(media.id)) continue;
+      const tracked = libraryById.get(media.id);
+      if (libraryIds.has(media.id) && (!options.favoriteSourcesOnly || tracked?.status === 'dropped' || (tracked?.status === 'completed' && !options.retainedIds?.has(media.id)))) continue;
+      if (options.favoriteSourcesOnly && options.feedback?.[`${entry.anime_id}:${media.id}`]?.sinceYouLikedFeedback) continue;
+      if (options.mediaType && (media.type ?? 'ANIME') !== options.mediaType) continue;
 
       const existing = candidates.get(media.id);
       const recommendationStrength =
         sourceStrength +
         (typeof recommendation.rating === "number" ? recommendation.rating / 25 : 0) +
-        (typeof media.averageScore === "number" ? media.averageScore / 40 : 0);
+        (typeof media.averageScore === "number" ? media.averageScore / 40 : 0) +
+        (options.feedback?.[`${entry.anime_id}:${media.id}`]?.feedbackAdjustment ?? 0);
       const sourceTitle = getRecommendationSourceTitle(entry, titleLanguage);
 
       if (existing) {
@@ -5773,6 +6000,8 @@ function buildPersonalizedRecommendations(
   }
 
   const sortedCandidates = [...candidates.values()].sort((a, b) => {
+    const retainedDifference = Number(options.retainedIds?.has(b.animeId) ?? false) - Number(options.retainedIds?.has(a.animeId) ?? false);
+    if (retainedDifference) return retainedDifference;
     if (b.strength !== a.strength) {
       return b.strength - a.strength;
     }
@@ -5780,9 +6009,12 @@ function buildPersonalizedRecommendations(
     return (b.averageScore ?? 0) - (a.averageScore ?? 0);
   });
 
-  return options.favoriteSourcesOnly
-    ? selectFavoriteRecommendationMix(sortedCandidates, 6, 4)
-    : sortedCandidates.slice(0, 6);
+  if (options.favoriteSourcesOnly) {
+    const retained = sortedCandidates.filter(candidate => options.retainedIds?.has(candidate.animeId)).slice(0, 4);
+    const retainedIds = new Set(retained.map(candidate => candidate.animeId));
+    return [...retained, ...selectFavoriteRecommendationMix(sortedCandidates.filter(candidate => !retainedIds.has(candidate.animeId)), 6, 4)].slice(0, 6);
+  }
+  return sortedCandidates.slice(0, 6);
 }
 
 function selectFavoriteRecommendationMix(
@@ -5899,16 +6131,7 @@ function getRecommendationSourceTitle(
   return getEntryTitle(entry, titleLanguage);
 }
 
-function buildRecommendationSource(entry: TrackedAnimeEntry): RecommendationSource | null {
-  if (
-    !entry.title_preferred &&
-    !entry.title_english &&
-    !entry.title_romaji &&
-    !entry.title_native
-  ) {
-    return null;
-  }
-
+function buildRecommendationSource(entry: TrackedAnimeEntry): RecommendationSource {
   return {
     animeId: entry.anime_id,
     title: {
@@ -6278,6 +6501,7 @@ function normalizePersonalGridLayout(value: unknown): PersonalGridItem[] {
       columns?: unknown;
       rows?: unknown;
       orientation?: unknown;
+      hidden?: unknown;
     };
     if (
       typeof raw.id !== "string" ||
@@ -6293,7 +6517,6 @@ function normalizePersonalGridLayout(value: unknown): PersonalGridItem[] {
     const defaultItem =
       DEFAULT_PERSONAL_GRID_LAYOUT.find((item) => item.id === id) ??
       ({ id, columns: 12, rows: 6 } satisfies PersonalGridItem);
-    const constraints = PERSONAL_GRID_CONSTRAINTS[id];
     const orientation = PERSONAL_GRID_SHELF_IDS.has(id)
       ? raw.orientation === "vertical"
         ? "vertical"
@@ -6301,38 +6524,21 @@ function normalizePersonalGridLayout(value: unknown): PersonalGridItem[] {
       : undefined;
     const requestedColumns = Number(raw.columns ?? raw.span ?? defaultItem.columns);
     const requestedRows = Number(raw.rows ?? defaultItem.rows);
-    const minimumColumns =
-      id === "stats" && orientation !== "vertical"
-        ? Math.max(10, constraints.minColumns)
-        : PERSONAL_GRID_SHELF_IDS.has(id) && orientation !== "vertical"
-        ? Math.max(6, constraints.minColumns)
-        : constraints.minColumns;
-    const minimumRows =
-      PERSONAL_GRID_SHELF_IDS.has(id) && id !== "stats" && orientation === "vertical"
-        ? Math.max(7, constraints.minRows)
-        : constraints.minRows;
-    const maximumRows =
-      PERSONAL_GRID_SHELF_IDS.has(id) && orientation !== "vertical"
-        ? (PERSONAL_GRID_HORIZONTAL_ROWS[id] ?? constraints.maxRows)
-        : constraints.maxRows;
     const columns = Math.max(
-      minimumColumns,
+      1,
       Math.min(
-        constraints.maxColumns,
+        12,
         Number.isFinite(requestedColumns)
           ? Math.round(requestedColumns)
           : defaultItem.columns
       )
     );
     const rows = Math.max(
-      minimumRows,
-      Math.min(
-        maximumRows,
-        Number.isFinite(requestedRows) ? Math.round(requestedRows) : defaultItem.rows
-      )
+      1,
+      Number.isFinite(requestedRows) ? Math.round(requestedRows) : defaultItem.rows
     );
 
-    items.push({ id, columns, rows, ...(orientation ? { orientation } : {}) });
+    items.push({ id, columns, rows, ...(orientation ? { orientation } : {}), ...(raw.hidden === true ? { hidden: true } : {}) });
   }
 
   for (const defaultItem of DEFAULT_PERSONAL_GRID_LAYOUT) {
@@ -6546,4 +6752,22 @@ function toQuickAddAnime(anime: TrendingAnime): QuickAddAnime {
     season: anime.season ?? null,
     seasonYear: anime.seasonYear ?? null,
   };
+}
+
+function normalizeDiscoverGridLayout(value: unknown): DiscoverGridItem[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value.filter((item): item is DiscoverGridItem => {
+    if (!item || typeof item.id !== 'string' || !item.id || item.id.length > 100 || seen.has(item.id)
+      || !Number.isInteger(item.columns) || item.columns < 1 || item.columns > 12
+      || !Number.isSafeInteger(item.rows) || item.rows < 1) return false;
+    seen.add(item.id); return true;
+  }).map(({ id, columns, rows }) => ({ id, columns, rows }));
+}
+
+function readDiscoverHiddenSections(userId: number): string[] {
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(`seenary.discover-hidden-${userId}`) ?? '[]');
+    return Array.isArray(value) ? [...new Set(value.filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 100))] : [];
+  } catch { return []; }
 }

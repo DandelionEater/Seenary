@@ -1,4 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
+contextBridge.exposeInMainWorld('desktopReleaseNotifications', {
+  show: notice => ipcRenderer.invoke('release-notice:show', notice),
+  clear: () => ipcRenderer.invoke('release-notice:clear'),
+  onTick: callback => { const handler = () => callback(); ipcRenderer.on('release-notice:tick', handler); return () => ipcRenderer.removeListener('release-notice:tick', handler); },
+  onOpen: callback => { const handler = (_event, payload) => callback(payload); ipcRenderer.on('release-notice:navigate', handler); return () => ipcRenderer.removeListener('release-notice:navigate', handler); },
+});
 
 function getSystemLocaleInfo() {
   try {

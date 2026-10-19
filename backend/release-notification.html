@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>
+*{box-sizing:border-box}
+html,body{overflow:hidden;width:100%;height:100%}
+body{opacity:0;transition:opacity 180ms ease-out}
+body.visible{opacity:1}
+@media(prefers-reduced-motion:reduce){body{transition:none}}
+body{margin:0;padding:8px;font-family:Segoe UI,Arial,sans-serif;color:#fff;background:transparent}article{border:1px solid #ffffff24;border-radius:22px;background:#17151c;box-shadow:0 4px 16px #0005;overflow:hidden}header{display:flex;align-items:center;justify-content:space-between;padding:12px 0;margin:0 16px;border-bottom:1px solid #ffffff14}#label{font-size:10px;font-weight:600;letter-spacing:1.5px;line-height:16px;color:#bda8f3}button{font:inherit;border:0;color:inherit;cursor:pointer}#dismiss{position:relative;background:transparent;color:#aaa;font-size:20px;line-height:24px;width:28px;height:28px;display:grid;place-items:center;padding:0;border-radius:50%}#dismiss:hover{background:#ffffff15}#open{display:flex;align-items:flex-start;gap:12px;width:100%;padding:16px;background:transparent;text-align:left}img{width:54px;height:82px;object-fit:cover;border-radius:10px;flex-shrink:0}#title{margin:0;font-size:14px;font-weight:600;line-height:20px;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}#message{margin:7px 0 0;font-size:12px;line-height:17px;color:#aaa4b5}button:focus{outline:none}
+article{touch-action:pan-y;user-select:none;transition:transform 180ms ease-out,opacity 180ms ease-out}
+article.snapping-back{transition:transform 420ms cubic-bezier(.34,1.56,.64,1),opacity 180ms ease-out}
+article.dragging{transition:none}
+img{-webkit-user-drag:none}
+#dismiss svg{position:absolute;inset:0;width:28px;height:28px;transform:rotate(-90deg);pointer-events:none}
+#dismiss > span{transform:translateY(-2px)}
+.countdown-track{fill:none;stroke:#ffffff18;stroke-width:1.5}
+.countdown-progress{fill:none;stroke:#bda8f3;stroke-width:1.5;stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:0}
+body.visible .countdown-progress{animation:countdown 10s linear forwards}
+@keyframes countdown{to{stroke-dashoffset:1}}
+@media(prefers-reduced-motion:reduce){article{transition:none}}
+</style></head><body><article><header><span id="label">SEENARY</span><button id="dismiss" tabindex="-1" aria-label="Dismiss release reminder"><svg viewBox="0 0 28 28" aria-hidden="true"><circle class="countdown-track" cx="14" cy="14" r="12" /><circle class="countdown-progress" cx="14" cy="14" r="12" pathLength="1" /></svg><span aria-hidden="true">&times;</span></button></header><button tabindex="-1" id="open" aria-label="Open title in Seenary"><img id="cover" alt="" hidden><div><p id="title"></p><p id="message"></p></div></button></article></body></html>

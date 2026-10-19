@@ -7,6 +7,7 @@ import type { Entry, Fields, Media, Reply, State } from './libraryClient';
 import { accountLock, browserStorage } from './browserStorage';
 import { atlasEndpoint } from './config';
 import { clearDiagnosticErrors, recordDiagnosticError } from '../utils/diagnostics';
+import type { RecommendationPreferencesReply, CommunityRecommendationReply, RecommendationStateReply } from '../types/sinceYouLiked';
 
 type Api = typeof window.api;
 const endpoint = atlasEndpoint;
@@ -15,6 +16,9 @@ const sessionKey = `seenary-atlas-renderer-session:${endpoint}`;
 const PENDING_UPLOAD_DELAY_MS = 10_000;
 type SessionUser = { id: string; username: string; [key: string]: unknown };
 type AccountReply = Omit<Reply, 'user'> & {
+  localCredentialsConfirmed?: boolean;
+  pendingCode?: boolean; resendAt?: string;
+  email?: string | null; pendingEmail?: string | null; configured?: boolean;
   user?: SessionUser;
   authorizationUrl?: string;
   pollToken?: string;
@@ -86,14 +90,21 @@ export function installAtlasRenderer(legacy: Api) {
     } catch (error) { recordDiagnosticError(method, 'TRANSPORT_FAILED'); throw error; }
     const result = await response.json();
     if (!response.ok || result.ok === false) recordDiagnosticError(method, result.code, response.status);
+    if (response.status === 409 && result.code === 'ACCOUNT_CHANGED' && expectedUserId && user?.id === expectedUserId) {
+      await activate(null);
+      window.dispatchEvent(new Event('seenary:session-invalidated'));
+    }
     if (method === 'getProviderSyncStatus' && result.sync?.lastOutcome === 'retry') recordDiagnosticError(`pull:${args[0]}`, result.sync.lastErrorCode, result.sync.lastErrorStatus ?? undefined, result.sync.lastErrorPhase);
-    if (!response.ok) throw new Error(result.code || result.message || 'Atlas is unavailable.');
+    if (!response.ok) throw Object.assign(new Error(result.code || result.message || 'Atlas is unavailable.'), { status: response.status });
     return result;
   }
-  async function providerAuthorization(provider: 'anilist' | 'mal', mode: 'login' | 'link'): Promise<ProviderLoginResult> {
+  async function providerAuthorization(provider: 'anilist' | 'mal', mode: 'login' | 'link', signal?: AbortSignal): Promise<ProviderLoginResult> {
+    const cancelled = () => ({ ok: false, message: 'Sign-in cancelled.' });
+    if (signal?.aborted) return cancelled();
     const isDesktop = Boolean(window.desktopExternal || window.desktopUpdater || window.desktopEnvironment);
     if (isDesktop) {
       const started = await rpc(mode === 'link' ? 'beginProviderLink' : 'beginProviderLogin', [provider, undefined, 'poll'], user?.id);
+      if (signal?.aborted) return cancelled();
       if (!started.ok || !started.authorizationUrl || !started.pollToken) {
         return { ok: false, message: started.message || 'Unable to start provider authorization.' };
       }
@@ -110,7 +121,9 @@ export function installAtlasRenderer(legacy: Api) {
       const deadline = Date.now() + 10 * 60000;
       while (Date.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, 750));
+        if (signal?.aborted) return cancelled();
         const result = await rpc('pollProviderAuthorization', [provider, started.pollToken], user?.id) as ProviderLoginResult & { pending?: boolean };
+        if (signal?.aborted) return cancelled();
         if (result.pending) continue;
         if (result.ok && result.user) result.user = await activate(result.user as SessionUser) as RendererSessionUser;
         return result;
@@ -130,8 +143,13 @@ export function installAtlasRenderer(legacy: Api) {
         window.clearInterval(closedTimer);
         window.clearTimeout(timeout);
         window.removeEventListener('message', receive);
+        signal?.removeEventListener('abort', abort);
         if (result.ok && result.user) result.user = await activate(result.user as SessionUser) as RendererSessionUser;
         resolve(result);
+      };
+      const abort = () => {
+        try { popup.close(); } catch { /* The popup may already be gone. */ }
+        void finish(cancelled());
       };
       const receive = (event: MessageEvent) => {
         if (event.origin !== new URL(endpoint).origin || event.source !== popup || event.data?.type !== 'seenary:provider-auth-complete' || event.data?.provider !== provider) return;
@@ -145,6 +163,8 @@ export function installAtlasRenderer(legacy: Api) {
         void finish({ ok: false, message: 'Authorization timed out. Start again when you are ready.' });
       }, 10 * 60 * 1000);
       window.addEventListener('message', receive);
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
       popup.focus();
     });
   }
@@ -227,8 +247,11 @@ export function installAtlasRenderer(legacy: Api) {
   function row(entry: Entry, state: State, pending = state.pending.find(item => item.request.mediaId === entry.mediaId)) {
     const media = state.media[entry.mediaId];
     if (!media) throw new Error('Title identity is not cached yet. Reconnect to finish loading your library.');
-    return { ...media.metadata, [entry.type === 'ANIME' ? 'anime_id' : 'manga_id']: numericId(media), seenary_id: entry.mediaId,
-      media_type: entry.type, status: entry.status, is_favorite: entry.isFavorite, progress: entry.progress, volume_progress: entry.volumeProgress,
+    // Shared library cards and the entry editor use anime_id for either media
+    // type; manga_id remains the canonical manga field for manga-specific views.
+    return { ...media.metadata, anime_id: numericId(media), ...(entry.type === 'MANGA' ? { manga_id: numericId(media) } : {}), seenary_id: entry.mediaId,
+      media_type: entry.type, anime_status: entry.type === 'MANGA' ? media.metadata.manga_status ?? media.metadata.anime_status : media.metadata.anime_status,
+      status: entry.status, is_favorite: entry.isFavorite, progress: entry.progress, volume_progress: entry.volumeProgress,
       score: normalizedScore(entry.score), notes: entry.notes, started_at: entry.startedAt, completed_at: entry.completedAt,
       repeat_count: entry.repeatCount, is_rewatching: entry.isRepeating, is_rereading: entry.isRepeating,
       created_at: entry.createdAt ?? null, updated_at: pending?.queuedAt ?? entry.updatedAt ?? null,
@@ -337,7 +360,12 @@ export function installAtlasRenderer(legacy: Api) {
     if (Number.isSafeInteger(id) && id !== 0) {
       try {
         const result = await rpc('getMediaDetails', [type, id], user?.id) as unknown as AnimeMedia;
-        if ((result?.id === id || id < 0 && result?.idMal === -id) && result?.title) return result;
+        if ((result?.id === id || id < 0 && result?.idMal === -id) && result?.title) {
+          // Details and library cards must share the latest public metadata.
+          // A local cache failure must not prevent an otherwise valid page loading.
+          await cacheMinimal(type, { ...result, id }, true).catch(() => undefined);
+          return result;
+        }
       } catch { /* The cached canonical title remains usable during provider outages. */ }
     }
     const state = await load();
@@ -349,11 +377,12 @@ export function installAtlasRenderer(legacy: Api) {
       averageScore: meta.average_score, meanScore: meta.mean_score, isAdult: Boolean(meta.is_adult),
       status: meta.anime_status ?? meta.manga_status, recommendations: { nodes: meta.recommendations ?? cached.sources?.anilist?.details?.recommendations?.nodes ?? [] } } as AnimeMedia;
   }
-  async function cacheMinimal(type: Entry['type'], incoming: AnimeMedia) {
+  async function cacheMinimal(type: Entry['type'], incoming: AnimeMedia, existingOnly = false) {
     return operate(async client => {
       const state = await client.read();
       let media = Object.values(state.media).find(media => media.type === type && numericId(media) === incoming.id);
       if (!media) {
+        if (existingOnly) return { ok: true };
         const reply = await rpc('ensureLibraryMedia', [type, incoming.id > 0 ? 'anilist' : 'mal', Math.abs(incoming.id)], client.userId);
         if (!reply.ok) return reply;
         media = reply.media as Media;
@@ -361,17 +390,26 @@ export function installAtlasRenderer(legacy: Api) {
       const metadata = { ...media.metadata };
       const values = { title_preferred: incoming.title?.userPreferred, title_english: incoming.title?.english, title_romaji: incoming.title?.romaji, title_native: incoming.title?.native,
         cover_image_large: incoming.coverImage?.large, banner_image: incoming.bannerImage, episodes: incoming.episodes, chapters: incoming.chapters, volumes: incoming.volumes,
-        is_adult: incoming.isAdult, duration: incoming.duration, genres: incoming.genres, recommendations: incoming.recommendations?.nodes };
+        is_adult: incoming.isAdult, duration: incoming.duration, genres: incoming.genres, recommendations: incoming.recommendations?.nodes,
+        [type === 'ANIME' ? 'anime_status' : 'manga_status']: incoming.status,
+        format: incoming.format, season: incoming.season, season_year: incoming.seasonYear,
+        start_date: incoming.startDate, end_date: incoming.endDate,
+        average_score: incoming.averageScore, mean_score: incoming.meanScore };
       for (const [key, value] of Object.entries(values)) if (value !== undefined && value !== null) metadata[key] = value;
+      if (Object.hasOwn(incoming, 'nextAiringEpisode')) {
+        metadata.next_airing_episode = incoming.nextAiringEpisode?.episode ?? null;
+        metadata.next_airing_at = incoming.nextAiringEpisode?.airingAt ?? null;
+      }
       state.media[media._id] = { ...media, metadata };
       await storage.write(client.userId, state);
+      notify();
       return { ok: true };
     });
   }
   async function linkStatus(provider: 'anilist' | 'mal') {
     const result = await rpc('getProviderAccount', [provider], user?.id);
     const link = result.account ?? null;
-    return { ok: result.ok, linked: Boolean(link), account: link ? {
+    return { ok: result.ok, localCredentialsConfirmed: result.localCredentialsConfirmed, linked: Boolean(link), account: link ? {
       ...(provider === 'anilist' ? { anilistUserId: Number(link.providerUserId), anilistUsername: link.username, originalAniListUsername: link.username } : { malUserId: Number(link.providerUserId), malUsername: link.username, originalMalUsername: link.username }),
       lastImportAt: link.lastImportAt ?? null, updatedAt: link.updatedAt, needsReauthorization: link.needsReauthorization } : null,
       message: link?.needsReauthorization ? `Reconnect ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} to continue syncing.` : undefined };
@@ -518,6 +556,7 @@ export function installAtlasRenderer(legacy: Api) {
     getSession: async () => {
       try { const reply = await rpc('getSession'); return { ...reply, user: await activate(reply.user as SessionUser ?? null) }; }
       catch (error) {
+        if (error instanceof Error && 'status' in error) throw error;
         const cached = JSON.parse(localStorage.getItem(sessionKey) || 'null') as SessionUser | null;
         if (!cached?.id) throw error;
         return { authenticated: true, offline: true, user: await activate(cached) };
@@ -525,19 +564,30 @@ export function installAtlasRenderer(legacy: Api) {
     },
     login: async (name: string, password: string) => { const reply = await rpc('login', [name, password]); return { ...reply, message: reply.message || reply.code || '', user: reply.user ? await activate(reply.user as SessionUser) : undefined }; },
     register: async (name: string, password: string) => { const reply = await rpc('register', [name, password]); return { ...reply, message: reply.message || reply.code || '', user: reply.user ? await activate(reply.user as SessionUser) : undefined }; },
-    startAniListLogin: () => providerAuthorization('anilist', 'login'),
+    startAniListLogin: (_username?: string, options?: { signal?: AbortSignal }) => providerAuthorization('anilist', 'login', options?.signal),
     completeAniListLogin: async (username: string, signupToken?: string) => {
       if (!signupToken) return providerAuthorization('anilist', 'login');
       const reply = await rpc('completeProviderSignup', ['anilist', signupToken, username]);
       return { ...reply, user: reply.user ? await activate(reply.user as SessionUser) : undefined };
     },
-    startMalLogin: () => providerAuthorization('mal', 'login'),
+    startMalLogin: (_username?: string, options?: { signal?: AbortSignal }) => providerAuthorization('mal', 'login', options?.signal),
     completeMalLogin: async (username: string, signupToken?: string) => {
       if (!signupToken) return providerAuthorization('mal', 'login');
       const reply = await rpc('completeProviderSignup', ['mal', signupToken, username]);
       return { ...reply, user: reply.user ? await activate(reply.user as SessionUser) : undefined };
     },
-    logout: async () => { const reply = await rpc('logout', [], user?.id); if (reply.ok) await activate(null); return reply; },
+    logout: async () => {
+      try {
+        const reply = await rpc('logout', [], user?.id);
+        if (reply.ok) await activate(null);
+        return reply;
+      } catch (error) {
+        // A stale account must not prevent leaving the local signed-in screen.
+        // Do not retry without the identity guard: that could log out another account.
+        if (!(error instanceof Error) || error.message !== 'ACCOUNT_CHANGED') throw error;
+        return { ok: true };
+      }
+    },
     getMyList: () => list('ANIME'), getMyMangaList: () => list('MANGA'),
     getMyListEntry: (id: number) => entry('ANIME', id), getMyMangaListEntry: (id: number) => entry('MANGA', id),
     saveMyListEntry: (id: number, data: Record<string, unknown>) => save('ANIME', id, data),
@@ -551,8 +601,10 @@ export function installAtlasRenderer(legacy: Api) {
     getAnimeFranchiseStartDate: (id: number) => rpc('getAnimeFranchiseStartDate', [id], user?.id),
     searchMedia: (text: string, hideAdultContent = true) => rpc('searchMedia', [text, hideAdultContent], user?.id),
     getDiscoverMedia: (hideAdultContent = true, mediaType?: Entry['type']) => rpc('getDiscoverMedia', [hideAdultContent, mediaType], user?.id),
+    getDiscoverTags: (safe = true) => rpc('getDiscoverTags', [safe], user?.id) as unknown as Promise<string[]>,
+    getDiscoverGenres: (safe = true) => rpc('getDiscoverGenres', [safe], user?.id) as unknown as Promise<string[]>,
     getDiscoverShelfAnime: (shelfId: string, page = 1, hideAdultContent = true, mediaType = 'ANIME') => rpc('getDiscoverShelfAnime', [shelfId, page, hideAdultContent, mediaType], user?.id),
-    getReleaseCalendar: (start: number, end: number, hideAdultContent = true, mediaType = 'ANIME') => rpc('getReleaseCalendar', [start, end, hideAdultContent, mediaType], user?.id),
+    getReleaseCalendar: (start: number, end: number, hideAdultContent = true, mediaType = 'ANIME', page?: number) => rpc('getReleaseCalendar', [start, end, hideAdultContent, mediaType, page], user?.id),
     getStudioMedia: (id: number, page = 1, hideAdultContent = true) => rpc('getStudioMedia', [id, page, hideAdultContent], user?.id),
     getArtistMedia: (slug: string, page = 1, hideAdultContent = true) => rpc('getArtistMedia', [slug, page, hideAdultContent], user?.id),
     getAnimeThemeMusic: async (id: number, titles: string[] = []) => await rpc('getAnimeThemeMusic', [id, titles], user?.id) as unknown as AnimeThemeMusicItem[],
@@ -566,6 +618,12 @@ export function installAtlasRenderer(legacy: Api) {
     importMal: (username: string, statuses: string[] = [], keys: string[] = [], options: { signal?: AbortSignal } = {}) => importProvider(username, statuses, keys, options, 'mal'),
     importTextList: importText,
     cacheMinimalAnime: (media: AnimeMedia) => cacheMinimal('ANIME', media), cacheMinimalManga: (media: AnimeMedia) => cacheMinimal('MANGA', media),
+    getRecommendationPreferences: async (request: Parameters<Api['getRecommendationPreferences']>[0]) => await rpc('getRecommendationPreferences', [request], user?.id) as unknown as RecommendationPreferencesReply,
+    getCommunityRecommendations: async (request: Parameters<Api['getCommunityRecommendations']>[0]) => await rpc('getCommunityRecommendations', [request], user?.id) as unknown as CommunityRecommendationReply,
+    getSinceYouLikedState: async (request: Parameters<Api['getSinceYouLikedState']>[0]) =>
+      await rpc('getSinceYouLikedState', [request], user?.id) as unknown as RecommendationStateReply,
+    setSinceYouLikedFeedback: (request: Parameters<Api['setSinceYouLikedFeedback']>[0]) => rpc('setSinceYouLikedFeedback', [request], user?.id),
+    setSinceYouLikedHidden: (request: Parameters<Api['setSinceYouLikedHidden']>[0]) => rpc('setSinceYouLikedHidden', [request], user?.id),
     getSettings: async () => {
       const local = await localStore.getSettings(preferenceId ?? 0);
       if (!user?.id) return local;
@@ -598,6 +656,15 @@ export function installAtlasRenderer(legacy: Api) {
     linkMalAccount: () => providerAuthorization('mal', 'link'),
     resolveAniListLinkConflict: async () => ({ ok: false, message: 'Provider accounts cannot be transferred or merged. Sign in to the owning Seenary account.' }),
     resolveMalLinkConflict: async () => ({ ok: false, message: 'Provider accounts cannot be transferred or merged. Sign in to the owning Seenary account.' }),
+    getRecoveryEmail: () => rpc('getRecoveryEmail', [], user?.id),
+    setRecoveryEmail: (email: string, password: string) => rpc('setRecoveryEmail', [email, password], user?.id),
+    verifyRecoveryEmailCode: (code: string) => rpc('verifyRecoveryEmailCode', [code], user?.id),
+    resendRecoveryEmailCode: () => rpc('resendRecoveryEmailCode', [], user?.id),
+    verifyRecoveryEmail: (token: string) => rpc('verifyRecoveryEmail', [token]),
+    requestPasswordReset: (email: string) => rpc('requestPasswordReset', [email]),
+    resetPassword: (token: string, password: string) => rpc('resetPassword', [token, password]),
+    changePassword: (currentPassword: string, newPassword: string) => rpc('changePassword', [currentPassword, newPassword], user?.id),
+    setPasswordAndUnlink: (provider: 'anilist' | 'mal', password: string) => rpc('unlinkProvider', [provider, password, true], user?.id),
     setLocalPassword: (password: string) => rpc('setLocalPassword', [password], user?.id),
     unlinkAniListAccount: (password: string) => rpc('unlinkProvider', ['anilist', password], user?.id),
     unlinkMalAccount: (password: string) => rpc('unlinkProvider', ['mal', password], user?.id),
@@ -649,10 +716,13 @@ export function installAtlasRenderer(legacy: Api) {
       return { ok: true, message: 'Cached title data was rebuilt from Atlas. Your library, pending edits, import review, and settings were preserved.',
         removedDetails: removedMedia, removedMedia, clearedWebCache: desktopResult.clearedWebCache, restartRecommended: true };
     },
-    setTutorialDismissed: async () => ({ ok: true, user: user && { ...user, id: preferenceId, tutorial_dismissed: 1 } }),
+    setTutorialDismissed: async (dismissed: boolean) => {
+      const reply = await rpc('setTutorialDismissed', [dismissed], user?.id);
+      return { ...reply, user: reply.user ? await activate(reply.user) : undefined };
+    },
   };
   Object.assign(handlers, methods);
-  const publicReads = new Set(['searchMedia', 'getDiscoverMedia', 'getDiscoverShelfAnime', 'getReleaseCalendar', 'getStudioMedia', 'getArtistMedia']);
+  const publicReads = new Set(['searchMedia', 'getDiscoverMedia', 'getDiscoverShelfAnime', 'getDiscoverGenres', 'getDiscoverTags', 'getReleaseCalendar', 'getStudioMedia', 'getArtistMedia']);
   // Electron contextBridge objects are frozen and expose non-configurable
   // properties. A fresh target lets Atlas override those method names while
   // still delegating explicitly supported native reads to the legacy bridge.
@@ -682,4 +752,20 @@ export function installAtlasRenderer(legacy: Api) {
   }
   window.addEventListener('online', () => void tick());
   window.setInterval(() => void tick(), 60000);
+  let lastSessionRenewal = -Infinity;
+  let renewingSession = false;
+  const renewFromInput = (event: Event) => {
+    if (!event.isTrusted || document.visibilityState !== 'visible' || !document.hasFocus() || !user) return;
+    const now = performance.now();
+    if (renewingSession || now - lastSessionRenewal < 60 * 60 * 1000) return;
+    lastSessionRenewal = now;
+    renewingSession = true;
+    void rpc('renewSession', [], user.id).catch(() => {
+      // Retry on later input, without creating a background renewal timer.
+      lastSessionRenewal = performance.now() - 60 * 60 * 1000 + 60000;
+    }).finally(() => { renewingSession = false; });
+  };
+  for (const event of ['pointerdown', 'keydown', 'wheel']) {
+    window.addEventListener(event, renewFromInput, { passive: true });
+  }
 }

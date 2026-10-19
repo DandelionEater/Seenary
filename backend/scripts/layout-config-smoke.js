@@ -54,6 +54,43 @@ try {
   );
 
   assert.equal(set(-1, { mangaPersonalGridLayout: [{ id: 'account', columns: 5, rows: 6 }] }).ok, true);
+  const customizedGrid = [
+    { id: 'planned', columns: 1, rows: 1, orientation: 'vertical', hidden: true },
+    { id: 'activity', columns: 3, rows: 25 },
+    { id: 'sinceLiked', columns: 1, rows: 1, hidden: true },
+  ];
+  assert.equal(set(-1, { personalGridLayout: customizedGrid }).ok, true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')).users['-1'].personalGridLayout,
+    customizedGrid, 'The ordering file must preserve hidden shelves, order, and custom dimensions');
+  assert.deepEqual(JSON.parse(JSON.stringify(handlers.get('layout-config:get')(null, -1).personalGridLayout)),
+    customizedGrid, 'Reloading must preserve removed shelves');
+  const restoredGrid = customizedGrid.map(({ hidden, ...item }) => item);
+  assert.equal(set(-1, { personalGridLayout: restoredGrid }).ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(handlers.get('layout-config:get')(null, -1).personalGridLayout)),
+    restoredGrid, 'Re-added shelves must retain their order and dimensions');
+  assert.deepEqual(JSON.parse(JSON.stringify(handlers.get('layout-config:get')(null, -1).mangaPersonalGridLayout)),
+    [{ id: 'account', columns: 5, rows: 6 }], 'Anime edits must preserve the manga layout');
+  const discoverGrid = [{ id: 'trending', columns: 1, rows: 1 }, { id: 'popular-anime', columns: 7, rows: 30 }];
+  assert.equal(set(-1, { discoverGridLayout: discoverGrid, discoverLayoutOrder: ['popular-anime', 'trending'] }).ok, true);
+  const discoverLoaded = handlers.get('layout-config:get')(null, -1);
+  assert.deepEqual(JSON.parse(JSON.stringify(discoverLoaded.discoverGridLayout)), discoverGrid,
+    'Discover must reload 1x1 sizes and heights beyond the old limit');
+  assert.deepEqual(JSON.parse(JSON.stringify(discoverLoaded.discoverLayoutOrder)), ['popular-anime', 'trending']);
+  assert.equal(set(-1, { discoverHiddenSections: ['trending', 'popular-anime'] }).ok, true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')).users['-1'].discoverHiddenSections,
+    ['trending', 'popular-anime'], 'Removed Discover shelves must be stored in the ordering file');
+  const hiddenDiscover = handlers.get('layout-config:get')(null, -1);
+  assert.deepEqual(JSON.parse(JSON.stringify(hiddenDiscover.discoverHiddenSections)), ['trending', 'popular-anime']);
+  assert.deepEqual(JSON.parse(JSON.stringify(hiddenDiscover.discoverGridLayout)), discoverGrid,
+    'Removing shelves must preserve their custom sizes');
+  assert.deepEqual(JSON.parse(JSON.stringify(hiddenDiscover.discoverLayoutOrder)), ['popular-anime', 'trending'],
+    'Removing shelves must preserve their positions');
+  assert.equal(set(-1, { discoverHiddenSections: [] }).ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(handlers.get('layout-config:get')(null, -1).discoverHiddenSections)), [],
+    'Re-adding all Discover shelves must persist across reloads');
+  assert.equal(set(-1, { discoverGridLayout: [{ id: 'trending', columns: 13, rows: 1 }] }).ok, false);
+  assert.equal(set(-1, { discoverGridLayout: [] }).ok, true, 'Reset must clear saved Discover sizes');
+  assert.deepEqual(JSON.parse(JSON.stringify(handlers.get('layout-config:get')(null, -1).discoverGridLayout)), []);
   assert.equal(fs.existsSync(path.join(temporaryDirectory, 'seenary-config.backup.json')), true,
     'Updating the JSON configuration must retain its previous version as a backup');
   console.log('Desktop JSON layout configuration checks passed.');

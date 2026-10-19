@@ -9,10 +9,11 @@ const LAYOUT_KEYS = new Set([
   'personalLayoutOrder',
   'mangaPersonalLayoutOrder',
   'discoverLayoutOrder',
+  'discoverHiddenSections',
   'myListSectionOrder',
   'mangaMyListSectionOrder',
 ]);
-const GRID_LAYOUT_KEYS = new Set(['personalGridLayout', 'mangaPersonalGridLayout']);
+const GRID_LAYOUT_KEYS = new Set(['personalGridLayout', 'mangaPersonalGridLayout', 'discoverGridLayout']);
 const GRID_WIDGET_IDS = new Set(['spotlight', 'account', 'stats', 'activity', 'continue', 'planned', 'sinceLiked']);
 
 function getConfigPath() {
@@ -50,28 +51,29 @@ function normalizeUserLayouts(value) {
   }
 
   for (const key of GRID_LAYOUT_KEYS) {
-    const layout = normalizeGridLayout(value?.[key]);
+    const layout = normalizeGridLayout(value?.[key], key === 'discoverGridLayout');
     if (layout) layouts[key] = layout;
   }
 
   return layouts;
 }
 
-function normalizeGridLayout(value) {
+function normalizeGridLayout(value, discover = false) {
   if (!Array.isArray(value)) return null;
   const seen = new Set();
   const layout = [];
   for (const candidate of value) {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)
-        || !GRID_WIDGET_IDS.has(candidate.id) || seen.has(candidate.id)
+        || !(discover ? typeof candidate.id === 'string' && candidate.id.length > 0 && candidate.id.length <= 100 : GRID_WIDGET_IDS.has(candidate.id)) || seen.has(candidate.id)
         || !Number.isInteger(candidate.columns) || candidate.columns < 1 || candidate.columns > 12
-        || !Number.isInteger(candidate.rows) || candidate.rows < 1 || candidate.rows > 20
+        || !Number.isSafeInteger(candidate.rows) || candidate.rows < 1
         || candidate.orientation != null && !['horizontal', 'vertical'].includes(candidate.orientation)) continue;
     seen.add(candidate.id);
     layout.push({ id: candidate.id, columns: candidate.columns, rows: candidate.rows,
-      ...(candidate.orientation ? { orientation: candidate.orientation } : {}) });
+      ...(candidate.orientation ? { orientation: candidate.orientation } : {}),
+      ...(candidate.hidden === true ? { hidden: true } : {}) });
   }
-  return layout.length ? layout : null;
+  return layout.length || discover && value.length === 0 ? layout : null;
 }
 
 function normalizeConfig(value) {
@@ -173,7 +175,7 @@ function setLayoutOrders(userIdValue, payload) {
   }
   for (const key of GRID_LAYOUT_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(payload, key)) continue;
-    const layout = normalizeGridLayout(payload[key]);
+    const layout = normalizeGridLayout(payload[key], key === 'discoverGridLayout');
     if (!layout) return { ok: false, message: `Invalid ${key}.` };
     current[key] = layout;
   }

@@ -101,7 +101,7 @@ type MyListPageProps = {
   onScrollPositionChange: (scrollTop: number) => void;
 };
 
-type SortMode = "alphabetical" | "personalScore";
+type SortMode = "alphabetical" | "personalScore" | "newest";
 type ListStatus = MyListEntry["status"];
 type MyListDensity = "comfortable" | "balanced" | "compact";
 type MyListView = "list" | "grid" | "board";
@@ -247,7 +247,7 @@ function readStoredSortMode(mediaType: MediaType = "ANIME"): SortMode {
       getMediaPreferenceKey(MY_LIST_SORT_MODE_LEGACY_KEY, mediaType)
     );
 
-    return storedSortMode === "personalScore" || storedSortMode === "alphabetical"
+    return storedSortMode === "personalScore" || storedSortMode === "alphabetical" || storedSortMode === "newest"
       ? storedSortMode
       : "alphabetical";
   } catch {
@@ -797,49 +797,50 @@ export function MyListPage({
                 )}
               </div>
 
-              <div className="flex shrink-0 flex-wrap gap-2 self-start lg:ml-3">
+              <div className="flex shrink-0 flex-wrap items-center gap-2 self-start lg:ml-3">
+                <Tooltip content={activeFilterCount > 0 ? `Filters (${activeFilterCount} active)` : "Filters"}>
                 <button
                   type="button"
+                  aria-label={activeFilterCount > 0 ? `Filters (${activeFilterCount} active)` : "Filters"}
+                  aria-expanded={filtersOpen}
                   onClick={() => setFiltersOpen((current) => {
                     const next = !current;
                     if (!next) setOpenFilter(null);
                     return next;
                   })}
-                  className={`inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm transition ${
+                  className={`relative inline-flex h-10 w-10 items-center justify-center rounded-2xl border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] ${
                     filtersOpen || activeFilterCount
                       ? "border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-white"
                       : "border-white/10 bg-white/[0.03] text-white/60 hover:bg-white/8 hover:text-white"
                   }`}
                 >
-                  <FunnelIcon className="h-4 w-4" />
-                  Filters
+                  <FunnelIcon aria-hidden="true" className="h-4 w-4" />
                   {activeFilterCount > 0 && (
-                    <span className="rounded-full bg-black/25 px-1.5 py-0.5 text-[10px]">{activeFilterCount}</span>
+                    <span aria-hidden="true" className="absolute -right-1 -top-1 min-w-4 rounded-full bg-[var(--app-accent)] px-1 text-[10px] font-semibold text-black">{activeFilterCount}</span>
                   )}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setSortMode("alphabetical")}
-                  className={`inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm transition ${
-                    sortMode === "alphabetical"
-                      ? "border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-white"
-                      : "border-white/10 bg-white/[0.03] text-white/60 hover:bg-white/8 hover:text-white"
-                  }`}
-                >
-                  A-Z
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSortMode("personalScore")}
-                  className={`inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm transition ${
-                    sortMode === "personalScore"
-                      ? "border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-white"
-                      : "border-white/10 bg-white/[0.03] text-white/60 hover:bg-white/8 hover:text-white"
-                  }`}
-                >
-                  <StarIcon className="h-4 w-4" />
-                  My rating
-                </button>
+                </Tooltip>
+                <div role="group" aria-label="Sort list" className="inline-flex items-center rounded-2xl border border-white/10 bg-black/20 p-1">
+                  {([
+                    { value: "alphabetical", label: "A-Z" },
+                    { value: "personalScore", label: "Rating" },
+                    { value: "newest", label: "Newest" },
+                  ] as const).map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={sortMode === value}
+                      onClick={() => setSortMode(value)}
+                      className={`rounded-xl px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] ${
+                        sortMode === value
+                          ? "bg-[var(--app-accent)] text-black"
+                          : "text-white/45 hover:bg-white/[0.04] hover:text-white/75"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -1939,8 +1940,19 @@ function compareEntries(
   const aFavorite = Boolean(a.is_favorite);
   const bFavorite = Boolean(b.is_favorite);
 
-  if (aFavorite !== bFavorite) {
+  if (sortMode !== "newest" && aFavorite !== bFavorite) {
     return aFavorite ? -1 : 1;
+  }
+
+  if (sortMode === "newest") {
+    const aUpdated = getLatestActivityTimestamp(a);
+    const bUpdated = getLatestActivityTimestamp(b);
+
+    if (aUpdated !== null && bUpdated !== null && aUpdated !== bUpdated) {
+      return bUpdated - aUpdated;
+    }
+    if (aUpdated !== null && bUpdated === null) return -1;
+    if (aUpdated === null && bUpdated !== null) return 1;
   }
 
   if (sortMode === "personalScore") {

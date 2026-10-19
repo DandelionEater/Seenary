@@ -123,6 +123,25 @@ jobs:
         run: node scripts/check-packaged-startup.js
         working-directory: backend
 
+      - name: Download previous installer for upgrade validation
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.2.4-beta --repo "$env:GITHUB_REPOSITORY" --pattern "Seenary-Setup-0.2.4-beta.exe" --dir backend/node_modules/.cache/previous-release
+
+      - name: Verify actual fresh installation and upgrade startup
+        run: node scripts/installed-startup-smoke.cjs node_modules/.cache/previous-release/Seenary-Setup-0.2.4-beta.exe
+        working-directory: backend
+
+      - name: Upload installer startup reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: installer-startup-reports-${{ needs.prepare.outputs.version }}
+          path: backend/node_modules/.cache/installed-startup/*.json
+          if-no-files-found: warn
+
       - name: Upload Windows release bundle
         uses: actions/upload-artifact@v6
         with:

@@ -92,6 +92,7 @@ async function main() {
     const newUser = await providers.completeSignup('mal', pendingSignup.signupToken, 'ProviderOnly', binding);
     assert.equal(newUser.ok, true);
     assert.equal(newUser.user.local_credentials_confirmed, false);
+    assert((await repo.providerRefreshStates.findOne({ userId: newUser.user.id, provider: 'mal' })).manualRequestedAt, 'provider signup queues the first pull');
     assert.equal((await providers.unlink(newUser.token, 'mal', 'anything')).ok, false);
     assert.equal((await providers.setLocalPassword(newUser.token, 'new-local-password')).ok, true);
     assert.equal((await accounts.getSession(newUser.token)).authenticated, false);
@@ -207,7 +208,7 @@ async function main() {
   } finally {
     if (server) await new Promise((resolve) => { server.close(resolve); server.closeIdleConnections(); });
     try {
-      for (const suffix of ['users', 'sessions', 'providerAccounts', 'oauthFlows', 'accountSettings', 'providerMigrationReceipts', 'jobs']) {
+      for (const suffix of ['users', 'sessions', 'providerAccounts', 'oauthFlows', 'accountSettings', 'providerMigrationReceipts', 'jobs', 'providerRefreshStates']) {
         await connection.db.collection(prefix + suffix).drop().catch((error) => { if (error.code !== 26) throw error; });
       }
     } finally { await connection.close(); }

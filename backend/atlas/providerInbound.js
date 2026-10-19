@@ -47,8 +47,18 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
   async function reserve(provider) { const slot = await budget.reserve(provider); if (!slot.ok) throw Object.assign(new Error('Budget busy'), { code: 'PROVIDER_BUDGET', retryAfter: slot.retryAfter }); }
   async function seed(limit = 100) {
     const links = await repo.providerAccounts.find({ needsReauthorization: { $ne: true } }).limit(limit).toArray();
-    for (const link of links) await repo.providerRefreshStates.findOneAndUpdate({ _id: link._id }, { $setOnInsert: { _id: link._id, userId: link.userId,
-      provider: link.provider, linkRevision: link.revision, revision: 0, nextAttemptAt: new Date(0) } }, { upsert: true, returnDocument: 'after' });
+    for (const link of links) {
+      const session = client.startSession();
+      try { await session.withTransaction(async () => {
+        // Deletion/unlink removes this document in its erasure transaction. A write
+        // here forces concurrent erasure to serialize with creation of worker state.
+        const current = await repo.providerAccounts.findOneAndUpdate({ _id: link._id, userId: link.userId },
+          { $inc: { inboundRevision: 1 } }, { session, returnDocument: 'after' });
+        if (!current) return;
+        await repo.providerRefreshStates.findOneAndUpdate({ _id: current._id }, { $setOnInsert: { _id: current._id, userId: current.userId,
+          provider: current.provider, linkRevision: current.revision, revision: 0, nextAttemptAt: new Date(0) } }, { upsert: true, returnDocument: 'after', session });
+      }); } finally { await session.endSession(); }
+    }
   }
   async function token(link) {
     if (link.provider !== 'mal' || !link.expiresAt || new Date(link.expiresAt).getTime() > now() + 60000) return cipher.decrypt(link.accessToken);
@@ -74,9 +84,17 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
       throw error;
     }
   }
-  async function apply(userId, provider, item, mediaId, observedAt) {
+  async function apply(userId, provider, item, mediaId, observedAt, claim, link) {
     const session = client.startSession();
     try { return await session.withTransaction(async () => {
+      // Checking outside this transaction leaves a gap where deletion can finish
+      // before an upsert recreates private library data. Both fences are writes.
+      const linked = await repo.providerAccounts.findOneAndUpdate({ _id: link._id, userId, provider, revision: link.revision, needsReauthorization: { $ne: true } },
+        { $inc: { inboundRevision: 1 } }, { session, returnDocument: 'after' });
+      if (!linked) return 'claim-lost';
+      const owned = await repo.providerRefreshStates.findOneAndUpdate({ _id: claim.state._id, leaseOwner: claim.owner },
+        { $inc: { revision: 1 } }, { session, returnDocument: 'after' });
+      if (!owned) return 'claim-lost';
       const id = entryKey(userId, mediaId); const current = await repo.libraryEntries.findOne({ _id: id }, { session });
       if (current && new Date(current.updatedAt || 0).getTime() > observedAt) return 'newer-cloud';
       const previousRemote = new Date(current?.inboundSources?.[provider] || 0).getTime();
@@ -93,6 +111,7 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
       const state = await repo.libraryState.findOneAndUpdate({ _id: userId }, { $inc: { sequence: 1 },
         $setOnInsert: { epoch: crypto.randomUUID(), retainedFrom: 0 } }, { upsert: true, returnDocument: 'after', session });
       const next = { _id: id, userId, mediaId, type: item.type, ...fields, deleted: false, revision: (current?.revision || 0) + 1,
+        statusChangedAt: current?.status === fields.status ? current.statusChangedAt || current.updatedAt || new Date(observedAt) : new Date(observedAt),
         sequence: state.sequence, inboundSources: { ...(current?.inboundSources || {}), [provider]: new Date(item.remoteUpdatedAt || observedAt) },
         createdAt: current?.createdAt || new Date(observedAt), updatedAt: new Date(observedAt), localUpdatedAt: current?.localUpdatedAt || null };
       let saved;
@@ -137,16 +156,27 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
           ...(manual ? { $unset: { manualRequestedAt: '' } } : {}) });
         return { status: 'skipped' };
       }
+      const checkActive = async () => {
+        const [linked, owned] = await Promise.all([
+          repo.providerAccounts.findOne({ _id: link._id, userId: state.userId, needsReauthorization: { $ne: true } }),
+          repo.providerRefreshStates.findOne({ _id: state._id, leaseOwner: claim.owner }),
+        ]);
+        if (!linked || !owned) throw Object.assign(new Error('Pull cancelled'), { code: 'PULL_CANCELLED' });
+      };
       let phase = 'authorization';
       try {
         await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
           { $set: { progress: { stage: 'fetching', current: 0, total: null, updatedAt: new Date(now()) } } });
-        const access = await token(link); link = await repo.providerAccounts.findOne({ _id: link._id });
+        const access = await token(link); await checkActive(); link = await repo.providerAccounts.findOne({ _id: link._id });
+        if (!link) return { status: 'skipped' };
         const all = [];
         for (const type of ['ANIME', 'MANGA']) {
           phase = type === 'ANIME' ? 'fetch-anime' : 'fetch-manga';
+          await checkActive();
           await reserve(link.provider);
+          await checkActive();
           const payload = await adapters.pull(link.provider, access, type, link.providerUserId);
+          await checkActive();
           phase = type === 'ANIME' ? 'normalize-anime' : 'normalize-manga';
           all.push(...normalize(link.provider, type, payload));
         }
@@ -155,6 +185,7 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
           await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
             { $set: { progress: { stage: 'hydrating', current: 0, total: all.length, updatedAt: new Date(now()) } } });
           for (let index = 0; index < all.length; index++) {
+            await checkActive();
             await metadata.anilist(all[index].publicMedia, all[index].type, observedAt);
             if ((index + 1) % 10 === 0 || index + 1 === all.length) await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
               { $set: { progress: { stage: 'hydrating', current: index + 1, total: all.length, updatedAt: new Date(now()) } } });
@@ -168,9 +199,11 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
           for (const type of ['ANIME', 'MANGA']) {
             const items = all.filter(item => item.type === type); const ids = items.map(item => item.providerId);
             for (let offset = 0; offset < ids.length; offset += 50) {
-              await reserve('anilist'); const rows = await adapters.mapMal(type, ids.slice(offset, offset + 50));
+              await checkActive();
+              await reserve('anilist'); await checkActive(); const rows = await adapters.mapMal(type, ids.slice(offset, offset + 50));
               const byMal = new Map((rows || []).filter(row => row.type === type && Number.isSafeInteger(row.idMal)).map(row => [row.idMal, row]));
               for (const item of items.slice(offset, offset + 50)) {
+                await checkActive();
                 item.mapping = byMal.get(item.providerId) || null;
                 if (item.mapping && metadata.anilist) await metadata.anilist(item.mapping, type, observedAt);
                 if (metadata.mal) await metadata.mal(item.publicMedia, type, observedAt);
@@ -211,7 +244,8 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
             try { document = await media.attachVerifiedMapping(document._id, { kind: 'anilist-idMal', type: item.type, anilistId: mapping.id, malId: mapping.idMal }); }
             catch (error) { if (['MAPPING_REVIEW_REQUIRED', 'MAPPING_CONFLICT'].includes(error.code)) counts.review++; else throw error; }
           }
-          const outcome = await apply(state.userId, link.provider, item, document._id, observedAt);
+          const outcome = await apply(state.userId, link.provider, item, document._id, observedAt, claim, link);
+          if (outcome === 'claim-lost') return { status: 'skipped', counts };
           if (outcome === 'applied') counts.applied++; else counts.skipped++;
           if ((index + 1) % 10 === 0 || index + 1 === pending.length) {
             await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
@@ -223,6 +257,7 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
           lastOutcome: 'success', lastCounts: counts, attempts: 0 }, $unset: { progress: '', lastErrorCode: '', lastErrorStatus: '', lastErrorPhase: '', ...(manual ? { manualRequestedAt: '' } : {}) } });
         return { status: 'succeeded', counts };
       } catch (error) {
+        if (error.code === 'PULL_CANCELLED') return { status: 'skipped' };
         const status = Number(error.status);
         const httpStatus = Number.isInteger(status) && status >= 400 && status <= 599 ? status : null;
         const attempts = (state.attempts || 0) + 1; const retry = error.retryAfter ? error.retryAfter * 1000 : Math.min(30000 * 2 ** (attempts - 1), 6 * 3600000);

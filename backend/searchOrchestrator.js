@@ -31,7 +31,7 @@ async function searchMedia(search, options = {}) {
     ...baseResults,
     songs: musicResults.songs,
     artists: musicResults.artists,
-    warnings: musicResults.warnings,
+    warnings: [...(baseResults.warnings || []), ...musicResults.warnings],
   };
 }
 

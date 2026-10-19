@@ -1,3 +1,4 @@
+import type { ReleaseReminderGroups } from '../utils/releaseReminderSettings';
 import type {
   AnimeMedia,
   AnimeThemeMusicItem,
@@ -16,6 +17,7 @@ import type {
   TrackedAnimeEntry,
   TrackedMangaEntry,
 } from "./domain";
+import type { RecommendationPreferencesRequest, RecommendationPreferencesReply, CommunityRecommendationRequest, CommunityRecommendationReply, RecommendationStateRequest, RecommendationStateReply, RecommendationFeedbackRequest, RecommendationHiddenRequest } from './sinceYouLiked';
 
 export {};
 
@@ -74,6 +76,9 @@ type AppSettings = {
   discoverDensity: "comfortable" | "balanced" | "compact";
   homeDensity: "comfortable" | "balanced" | "compact";
   myListDensity: "comfortable" | "balanced" | "compact";
+  releaseRemindersEnabled: boolean;
+  releaseReminderMinutes: number[];
+  releaseReminderGroups: ReleaseReminderGroups;
   startView: "home" | "list" | "search";
   shareAnonymousUsageStatistics: boolean;
   analyticsConsentDecided: boolean;
@@ -115,6 +120,14 @@ type SyncProgressEvent = {
 };
 
 declare global {
+  interface Window {
+    desktopReleaseNotifications?: {
+      onTick: (callback: () => void) => () => void;
+      show: (notice: import('../utils/releaseReminders').ReleaseNotice) => Promise<{ ok: boolean }>;
+      clear: () => Promise<{ ok: boolean }>;
+      onOpen: (callback: (payload: { id: number; type: 'ANIME' | 'MANGA' }) => void) => () => void;
+    };
+  }
   type AutoSyncCompleteEvent = {
     ok: boolean;
     message: string;
@@ -155,6 +168,8 @@ declare global {
         options?: { signal?: AbortSignal }
       ) => Promise<MediaSearchResults>;
       getDiscoverMedia: (hideAdultContent?: boolean, mediaType?: MediaType) => Promise<DiscoverMediaResult>;
+      getDiscoverTags: (hideAdultContent?: boolean) => Promise<string[]>;
+      getDiscoverGenres: (hideAdultContent?: boolean) => Promise<string[]>;
       getDiscoverShelfAnime: (
         shelfId: string,
         page?: number,
@@ -165,7 +180,8 @@ declare global {
         start: number,
         end: number,
         hideAdultContent?: boolean,
-        mediaType?: "ANIME" | "MANGA"
+        mediaType?: "ANIME" | "MANGA",
+        page?: number
       ) => Promise<ReleaseCalendarResult>;
       getStudioMedia: (
         studioId: number,
@@ -371,6 +387,11 @@ declare global {
         };
       }>;
       getSettings: () => Promise<AppSettings>;
+      getRecommendationPreferences: (request: RecommendationPreferencesRequest) => Promise<RecommendationPreferencesReply>;
+      getCommunityRecommendations: (request: CommunityRecommendationRequest) => Promise<CommunityRecommendationReply>;
+      getSinceYouLikedState: (request: RecommendationStateRequest) => Promise<RecommendationStateReply>;
+      setSinceYouLikedFeedback: (request: RecommendationFeedbackRequest) => Promise<{ ok: boolean; message?: string }>;
+      setSinceYouLikedHidden: (request: RecommendationHiddenRequest) => Promise<{ ok: boolean; message?: string }>;
       updateSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>;
       recordEngagement: (payload: {
         platform: string;
@@ -481,7 +502,7 @@ declare global {
 
       register: (username: string, password: string) => Promise<AuthResponse>;
       login: (username: string, password: string) => Promise<AuthResponse>;
-      startAniListLogin: (username?: string) => Promise<
+      startAniListLogin: (username?: string, options?: { signal?: AbortSignal }) => Promise<
         AuthResponse & {
           needsProfile?: boolean;
           needsUsername?: boolean;
@@ -508,7 +529,7 @@ declare global {
           };
         }
       >;
-      startMalLogin: (username?: string) => Promise<
+      startMalLogin: (username?: string, options?: { signal?: AbortSignal }) => Promise<
         AuthResponse & {
           needsProfile?: boolean;
           needsUsername?: boolean;
@@ -625,6 +646,15 @@ declare global {
         needsLocalPassword?: boolean;
         localCredentialsConfirmed?: boolean;
       }>;
+      getRecoveryEmail: () => Promise<{ ok: boolean; message?: string; configured?: boolean; email?: string | null; pendingEmail?: string | null; pendingCode?: boolean; resendAt?: string | null }>;
+      setRecoveryEmail: (email: string, password: string) => Promise<{ ok: boolean; message: string }>;
+      verifyRecoveryEmailCode: (code: string) => Promise<{ ok: boolean; message: string }>;
+      resendRecoveryEmailCode: () => Promise<{ ok: boolean; message: string; resendAt?: string }>;
+      verifyRecoveryEmail: (token: string) => Promise<{ ok: boolean; message: string }>;
+      requestPasswordReset: (email: string) => Promise<{ ok: boolean; message: string }>;
+      resetPassword: (token: string, password: string) => Promise<{ ok: boolean; message: string }>;
+      changePassword: (currentPassword: string, newPassword: string) => Promise<{ ok: boolean; message: string }>;
+      setPasswordAndUnlink?: (provider: 'anilist' | 'mal', password: string) => Promise<{ ok: boolean; message: string }>;
       setLocalPassword: (password: string) => Promise<{
         ok: boolean;
         message: string;
@@ -973,28 +1003,34 @@ declare global {
         message?: string;
         personalLayoutOrder?: string[];
         mangaPersonalLayoutOrder?: string[];
+        discoverGridLayout?: Array<{ id: string; columns: number; rows: number }>;
+        discoverHiddenSections?: string[];
         discoverLayoutOrder?: string[];
         myListSectionOrder?: string[];
         mangaMyListSectionOrder?: string[];
-        personalGridLayout?: Array<{ id: string; columns: number; rows: number; orientation?: "horizontal" | "vertical" }>;
-        mangaPersonalGridLayout?: Array<{ id: string; columns: number; rows: number; orientation?: "horizontal" | "vertical" }>;
+        personalGridLayout?: Array<{ id: string; columns: number; rows: number; orientation?: "horizontal" | "vertical"; hidden?: boolean }>;
+        mangaPersonalGridLayout?: Array<{ id: string; columns: number; rows: number; orientation?: "horizontal" | "vertical"; hidden?: boolean }>;
       }>;
       setLayoutOrders: (
         userId: number,
         layouts: {
           personalLayoutOrder?: string[];
           mangaPersonalLayoutOrder?: string[];
-          discoverLayoutOrder?: string[];
+          discoverGridLayout?: Array<{ id: string; columns: number; rows: number }>;
+        discoverHiddenSections?: string[];
+        discoverLayoutOrder?: string[];
           myListSectionOrder?: string[];
           mangaMyListSectionOrder?: string[];
-          personalGridLayout?: Array<{ id: string; columns: number; rows: number; orientation?: "horizontal" | "vertical" }>;
-          mangaPersonalGridLayout?: Array<{ id: string; columns: number; rows: number; orientation?: "horizontal" | "vertical" }>;
+          personalGridLayout?: Array<{ id: string; columns: number; rows: number; orientation?: "horizontal" | "vertical"; hidden?: boolean }>;
+          mangaPersonalGridLayout?: Array<{ id: string; columns: number; rows: number; orientation?: "horizontal" | "vertical"; hidden?: boolean }>;
         }
       ) => {
         ok: boolean;
         message?: string;
         personalLayoutOrder?: string[];
         mangaPersonalLayoutOrder?: string[];
+        discoverGridLayout?: Array<{ id: string; columns: number; rows: number }>;
+        discoverHiddenSections?: string[];
         discoverLayoutOrder?: string[];
         myListSectionOrder?: string[];
         mangaMyListSectionOrder?: string[];

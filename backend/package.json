@@ -1,10 +1,17 @@
 {
   "name": "seenary",
-  "version": "0.2.4-beta",
+  "version": "0.2.5-beta",
   "description": "Anime and media tracking desktop app.",
   "desktopName": "seenary",
   "main": "main.js",
   "scripts": {
+    "test:calendar-pagination": "node scripts/calendar-pagination-smoke.js",
+    "test:provider-signup-pull": "node scripts/provider-signup-pull-smoke.js",
+    "test:tutorial-dismissal": "node scripts/tutorial-dismissal-smoke.js",
+    "test:password-methods": "node scripts/password-methods-smoke.js",
+    "test:password-recovery": "node scripts/password-recovery-smoke.js",
+    "test:since-you-liked": "node scripts/since-you-liked-smoke.js",
+    "test:since-you-liked:browser": "node ../frontend/scripts/build-since-liked-fixture.mjs && electron scripts/since-you-liked-browser-smoke.cjs",
     "test:atlas-people": "node scripts/atlas-people-smoke.js",
     "test:atlas-discover-types": "node scripts/atlas-discover-types-smoke.js",
     "test:atlas-discover-speed": "node scripts/atlas-discover-speed-smoke.js",
@@ -69,7 +76,12 @@
     "pack:linux": "npm run build:frontend && electron-builder --linux dir --x64",
     "dist": "node scripts/build-release.js",
     "dist:linux": "node scripts/build-linux-release.js",
-    "generate:icons": "node scripts/generate-icons.js"
+    "generate:icons": "node scripts/generate-icons.js",
+    "test:community-recommendations": "node scripts/community-recommendations-smoke.cjs",
+    "test:since-you-liked:lifecycle": "node scripts/since-you-liked-lifecycle-smoke.cjs",
+    "test:recommendation-preferences": "node scripts/recommendation-preferences-smoke.cjs",
+    "test:discover-genres": "node scripts/discover-genres-smoke.cjs",
+    "test:discover-filters": "node scripts/discover-filters-smoke.cjs"
   },
   "keywords": [],
   "author": "Dainius Genzuras",
@@ -99,6 +111,9 @@
     "files": [
       "desktop-main.js",
       "desktop-preload.js",
+      "releaseNotifications.js",
+      "release-notification-preload.js",
+      "release-notification.html",
       "bundledFrontend.js",
       "desktopEnvironment.js",
       "appLifecycle.js",

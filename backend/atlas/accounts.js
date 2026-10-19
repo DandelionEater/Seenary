@@ -54,6 +54,9 @@ async function setupAccounts(db, prefix = '') {
   await repo.users.createIndex({ legacyKey: 1 }, { unique: true, partialFilterExpression: { legacyKey: { $type: 'string' } } });
   await repo.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
   await repo.sessions.createIndex({ userId: 1 });
+  await repo.users.createIndex({ recoveryEmail: 1 }, { unique: true, partialFilterExpression: { recoveryEmail: { $type: 'string' } } });
+  await repo.users.createIndex({ 'recoveryPending.hash': 1 }, { sparse: true });
+  await repo.users.createIndex({ 'passwordReset.hash': 1 }, { sparse: true });
   return repo;
 }
 
@@ -75,6 +78,16 @@ async function createAccountService(repo) {
   return {
     getAuthenticatedUser: session,
     issueSession,
+    async renewSession(token) {
+      const user = await session(token);
+      if (!user) return { ok: false, code: 'UNAUTHENTICATED' };
+      const now = new Date();
+      // Never recreate a revoked session or revive one that expired during validation.
+      const result = await repo.sessions.updateOne({ _id: tokenHash(token), userId: user._id,
+        authVersion: user.authVersion, expiresAt: { $gt: now } },
+      { $max: { expiresAt: new Date(now.getTime() + SESSION_MS) } });
+      return result.matchedCount ? { ok: true } : { ok: false, code: 'UNAUTHENTICATED' };
+    },
     async register(username, password) {
       if (typeof username !== 'string' || !/^[a-zA-Z0-9_]{3,20}$/.test(username.trim())) {
         return { ok: false, message: 'Username must contain 3–20 letters, numbers, or underscores.' };
@@ -106,6 +119,14 @@ async function createAccountService(repo) {
     async getSession(token) {
       const user = await session(token);
       return { authenticated: Boolean(user), user: safeUser(user) };
+    },
+    async setTutorialDismissed(token, dismissed) {
+      if (typeof dismissed !== 'boolean') return { ok: false, message: 'Invalid tutorial preference.' };
+      const user = await session(token);
+      if (!user) return { ok: false, message: 'You must be logged in.' };
+      const updated = await repo.users.findOneAndUpdate({ _id: user._id, authVersion: user.authVersion, status: { $ne: 'deleted' } },
+        { $set: { tutorial_dismissed: dismissed, updated_at: new Date() } }, { returnDocument: 'after' });
+      return updated ? { ok: true, user: safeUser(updated) } : { ok: false, message: 'Account changed; sign in again.' };
     },
     async logout(token) {
       if (typeof token === 'string') await repo.sessions.deleteOne({ _id: tokenHash(token) });

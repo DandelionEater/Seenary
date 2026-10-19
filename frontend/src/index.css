@@ -496,3 +496,48 @@
     grid-row: span var(--personal-grid-rows);
   }
 }
+/* Shared grid cell keeps metadata and feedback controls the same size.
+   Touch devices show actions; keyboard focus reveals them on desktop. */
+.since-liked-tags { opacity: 0; transition: opacity 120ms ease-in-out; }
+.since-liked-controls { opacity: 1; }
+@media (hover: hover) and (pointer: fine) {
+  /* Separate the layers in time so translucent icons never sit over tags.
+     Exit clears all buttons in 120ms; entry finishes in 420ms. */
+  .since-liked-tags { opacity: 1; transition-delay: 140ms; }
+  .since-liked-controls { pointer-events: none; }
+  .since-liked-action {
+    opacity: 0;
+    transform: translateX(16px);
+    transition: transform 220ms ease-in-out, opacity 120ms ease-in-out;
+    transition-delay: 0ms;
+  }
+  .since-liked-action:nth-child(2) { --since-liked-delay: 20ms; }
+  .since-liked-action:nth-child(3) { --since-liked-delay: 40ms; }
+  .since-liked-action:nth-child(4) { --since-liked-delay: 60ms; }
+  .since-liked-card:hover .since-liked-tags,
+  .since-liked-card:focus-within .since-liked-tags { opacity: 0; transition-delay: 0ms; }
+  .since-liked-card:hover .since-liked-controls,
+  .since-liked-card:focus-within .since-liked-controls { pointer-events: auto; }
+  .since-liked-card:hover .since-liked-action,
+  .since-liked-card:focus-within .since-liked-action {
+    opacity: 1;
+    transform: translateX(0);
+    transition-duration: 220ms, 100ms;
+    transition-delay: calc(140ms + var(--since-liked-delay, 0ms));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .since-liked-tags, .since-liked-action { transition: none; }
+  .since-liked-action { transform: none; }
+}
+.app-motion-reduced .since-liked-tags,
+.app-motion-reduced .since-liked-action,
+.app-motion-off .since-liked-tags,
+.app-motion-off .since-liked-action { transform: none !important; transition: none !important; }
+
+.discover-grid-widget { grid-column: 1 / -1; }
+.discover-sized-widget { height: var(--discover-height); }
+.discover-sized-widget > div:first-child { height: 100%; overflow: hidden; }
+@media (min-width: 1024px) {
+  .discover-grid-widget { grid-column: span var(--discover-columns, 12); }
+}

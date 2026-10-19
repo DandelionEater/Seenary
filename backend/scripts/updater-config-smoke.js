@@ -61,6 +61,7 @@ for (const [label, source] of [
 
 function exerciseUpdater(version, platform = 'win32') {
   let downloadCalls = 0;
+  const logs = [];
   const autoUpdater = {
     autoDownload: true,
     autoInstallOnAppQuit: true,
@@ -81,12 +82,15 @@ function exerciseUpdater(version, platform = 'win32') {
   const app = {
     isPackaged: true,
     getVersion: () => version,
+    getPath: () => '/synthetic-user-data',
   };
   const module = { exports: {} };
   const timer = { unref() {} };
   const handlers = new Map();
   const context = {
     require(id) {
+      if (id === 'node:path') return path;
+      if (id === 'node:fs') return { existsSync: () => false, appendFileSync(_file, message) { logs.push(message); } };
       if (id === 'electron') {
         return {
           app,
@@ -115,7 +119,7 @@ function exerciseUpdater(version, platform = 'win32') {
     webContents: { send() {} },
   });
 
-  return { autoUpdater, handlers, getDownloadCalls: () => downloadCalls };
+  return { autoUpdater, handlers, logs, getDownloadCalls: () => downloadCalls };
 }
 
 const betaEnvironment = exerciseUpdater('0.1.9-beta');
@@ -124,6 +128,9 @@ assert.equal(betaUpdater.allowPrerelease, true);
 assert.equal(betaUpdater.autoDownload, false);
 assert.equal(betaUpdater.autoInstallOnAppQuit, false);
 assert.equal(betaUpdater.disableDifferentialDownload, true);
+betaUpdater.logger.warn('Download fallback https://example.test/package?signature=private');
+assert.ok(betaEnvironment.logs.some(line => line.includes('Download fallback [download URL]')));
+assert.ok(betaEnvironment.logs.every(line => !line.includes('signature=private')));
 
 const { autoUpdater: stableUpdater } = exerciseUpdater('0.2.0');
 assert.equal(stableUpdater.allowPrerelease, false);

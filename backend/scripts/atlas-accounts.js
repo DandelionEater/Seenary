@@ -1,6 +1,7 @@
 require('../env');
 const { parseArgs } = require('node:util');
 const { connectStaging, reportError } = require('../atlas/connection');
+const { createRecoveryService } = require('../atlas/recovery');
 const { setupAccounts, collections, createAccountService } = require('../atlas/accounts');
 const { importAccounts, readSqliteAccounts } = require('../atlas/importAccounts');
 const { createStagingServer } = require('../atlas/stagingServer');
@@ -33,6 +34,7 @@ async function main() {
     } else {
       const repo = await setupAccounts(connection.db);
       const service = await createAccountService(repo);
+      Object.assign(service, createRecoveryService(repo, service));
       if (command === 'create') {
         // Credentials are deliberately not accepted as CLI arguments (shell history).
         const password = process.env.ATLAS_ACCOUNT_PASSWORD;
@@ -73,7 +75,9 @@ async function main() {
           provider: { collection: (type, username) => type === 'ANIME' ? require('../mal').getUserAnimeList(username) : require('../mal').getUserMangaList(username) } });
         const metadata = createMetadataService({ media, repo: mediaRepo, queries, provider: createAniListMetadataProvider(), malCache, malMapping, malImport });
         const analytics = require('../atlas/analytics').createAnalyticsService({ repo: { ...providerRepo, ...repo }, accounts: service });
-        server = createStagingServer(service, providers, media, library, metadata, analytics);
+        const { setupSinceYouLiked, createSinceYouLikedService } = require('../atlas/sinceYouLiked');
+        const recommendations = createSinceYouLikedService({ repo: await setupSinceYouLiked(connection.db), accounts: service });
+        server = createStagingServer(service, providers, media, library, metadata, analytics, { recommendations });
         const port = Number(process.env.ATLAS_STAGING_PORT || 3001);
         await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
         console.log(`Atlas account staging API: http://127.0.0.1:${server.address().port}/rpc`);

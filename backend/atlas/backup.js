@@ -7,9 +7,10 @@ const { setupMedia } = require('./media');
 const { setupLibrary, LIBRARY_COLLECTIONS } = require('./librarySchema');
 const { setupMetadata } = require('./metadata');
 const { setupAnalytics } = require('./analytics');
+const { setupSinceYouLiked, COLLECTIONS: RECOMMENDATION_COLLECTIONS } = require('./sinceYouLiked');
 
 const BACKUP_COLLECTIONS = ['users', 'sessions', 'providerAccounts', 'oauthFlows', 'accountSettings', 'providerMigrationReceipts',
-  'media', 'mediaRedirects', 'mediaMigrationReceipts', ...LIBRARY_COLLECTIONS, 'metadataQueries', 'analyticsDaily', 'analyticsMonthly'];
+  'media', 'mediaRedirects', 'mediaMigrationReceipts', ...LIBRARY_COLLECTIONS, 'metadataQueries', 'analyticsDaily', 'analyticsMonthly', ...RECOMMENDATION_COLLECTIONS];
 const uniqueCollections = [...new Set(BACKUP_COLLECTIONS)];
 function key(value) { const text = String(value || '').trim(); const result = /^[a-f0-9]{64}$/i.test(text) ? Buffer.from(text, 'hex') : Buffer.from(text, 'base64');
   if (result.length !== 32) throw new Error('A separate 32-byte backup encryption key is required.'); return result; }
@@ -35,6 +36,7 @@ async function setupRestore(db, prefix) {
   if (!/^batch1_test_[a-f0-9]+_$/.test(prefix || '')) throw new Error('Restore requires a disposable test prefix.');
   await setupAccounts(db, prefix); await setupProviders(db, prefix); await setupMedia(db, prefix); await setupLibrary(db, prefix);
   await setupMetadata(db, prefix); await setupAnalytics(db, prefix);
+  await setupSinceYouLiked(db, prefix);
 }
 async function restoreBackup(db, encodedKey, blob, prefix) {
   if (!/^batch1_test_[a-f0-9]+_$/.test(prefix || '')) throw new Error('Restore requires a disposable test prefix.');

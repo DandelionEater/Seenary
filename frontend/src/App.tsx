@@ -1,3 +1,4 @@
+import { normalizeReminderGroups } from './utils/releaseReminderSettings';
 import { BackgroundGlowsContext } from "./components/ui/backgroundGlowsContext";
 import {
   lazy,
@@ -23,11 +24,15 @@ import { StudioSearchCard } from "./components/StudioSearchCard";
 import { searchMedia } from "./services/anilist";
 import { TopNavbar, type ResolvedSearchTerm } from "./components/TopNavbar";
 import { HomePage } from "./components/HomePage";
+import { PasswordRecovery } from './components/PasswordRecovery';
+import { readRecoveryLink } from './utils/recoveryLink';
 import { AuthScreen } from "./components/AuthScreen";
 import { MyListPage } from "./components/MyListPage";
 import { ListEntryModal } from "./components/ListEntryModal";
 import type { AppSettings } from "./components/SettingsPage";
 import { getPreferredTitle } from "./utils/titlePreference";
+import { useReleaseReminders } from './hooks/useReleaseReminders';
+import { ReleaseNotification } from './components/ReleaseNotification';
 import { SyncToast, type SyncToastState } from "./components/SyncToast";
 import { UpdateModal } from "./components/UpdateModal";
 import { AnalyticsConsentModal } from "./components/AnalyticsConsentModal";
@@ -83,6 +88,8 @@ const EMPTY_MEDIA_SEARCH_RESULTS: MediaSearchResults = {
   studios: [],
   songs: [],
   artists: [],
+  genres: [],
+  tags: [],
   warnings: [],
 };
 const SONG_PREVIEW_VOLUME_STORAGE_KEY = "seenary:song-preview-volume";
@@ -107,6 +114,9 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   discoverDensity: "balanced",
   homeDensity: "balanced",
   myListDensity: "balanced",
+  releaseRemindersEnabled: true,
+  releaseReminderMinutes: [60, 0],
+  releaseReminderGroups: normalizeReminderGroups(null),
   startView: "home",
   shareAnonymousUsageStatistics: false,
   analyticsConsentDecided: false,
@@ -301,6 +311,7 @@ function redactAdultListEntry(entry: TrackedAnimeEntry): TrackedAnimeEntry {
 }
 
 function App() {
+  const [recoveryLink] = useState(readRecoveryLink);
   const [results, setResults] = useState<MediaSearchResults>(EMPTY_MEDIA_SEARCH_RESULTS);
   const [songPreviewVolume, setSongPreviewVolume] = useState(readSongPreviewVolume);
   const [searchQuery, setSearchQuery] = useState("");
@@ -420,6 +431,8 @@ function App() {
       const warnings = results.warnings ?? [];
       return settings.hideAdultContent
         ? {
+            genres: (results.genres ?? []).filter(item => !item.isAdult),
+            tags: (results.tags ?? []).filter(item => !item.isAdult),
             anime: results.anime.filter((media) => !media.isAdult),
             manga: results.manga.filter((media) => !media.isAdult),
             characters: characterResults.filter((result) => !result.media.isAdult),
@@ -430,6 +443,8 @@ function App() {
           }
         : {
             ...results,
+            genres: (results.genres ?? []).filter(item => !settings.hideAdultContent || !item.isAdult),
+            tags: (results.tags ?? []).filter(item => !settings.hideAdultContent || !item.isAdult),
             characters: characterResults,
             studios: studioResults,
             songs: songResults,
@@ -445,14 +460,14 @@ function App() {
     privacySafeResults.characters.length +
     privacySafeResults.studios.length +
     privacySafeResults.songs.length +
-    privacySafeResults.artists.length;
+    privacySafeResults.artists.length + privacySafeResults.genres.length + privacySafeResults.tags.length;
   const searchResultCount =
     results.anime.length +
     results.manga.length +
     (results.characters?.length ?? 0) +
     (results.studios?.length ?? 0) +
     (results.songs?.length ?? 0) +
-    (results.artists?.length ?? 0);
+    (results.artists?.length ?? 0) + (results.genres?.length ?? 0) + (results.tags?.length ?? 0);
   const hasSearch = Boolean(searchQuery.trim() || resolvedSearchTerms.length);
   const searchDisplayQuery = [
     ...resolvedSearchTerms.map((term) => term.query),
@@ -1186,6 +1201,9 @@ function App() {
     username: string;
     tutorial_dismissed: number;
   }) => {
+    // Restore this account's consent before rendering the signed-in shell.
+    const normalizedSettings = normalizeAppSettings(await window.api.getSettings());
+    setSettings(normalizedSettings);
     libraryAccountGenerationRef.current += 1;
     setTrackedEntries([]);
     setTrackedMangaEntries([]);
@@ -1193,7 +1211,7 @@ function App() {
     libraryLoadFailedRef.current = false;
     setAuthUser(user);
     setShowTutorial(!user.tutorial_dismissed);
-    setCurrentView(settings.startView === "list" ? "list" : "home");
+    setCurrentView(normalizedSettings.startView === "list" ? "list" : "home");
     await loadTrackedEntries();
   };
 
@@ -1295,7 +1313,7 @@ function App() {
     try {
       const queryResults = await Promise.all(
         queries.map(async (query) => {
-          const cacheKey = `music-v2:${settings.hideAdultContent ? "safe" : "all"}:${normalizeSearchTerm(query)}`;
+          const cacheKey = `taxonomy-v3:${settings.hideAdultContent ? "safe" : "all"}:${normalizeSearchTerm(query)}`;
           const cachedResults = searchResultCacheRef.current.get(cacheKey);
           if (cachedResults) return cachedResults;
 
@@ -1306,7 +1324,7 @@ function App() {
             const oldestKey = searchResultCacheRef.current.keys().next().value;
             if (oldestKey) searchResultCacheRef.current.delete(oldestKey);
           }
-          searchResultCacheRef.current.set(cacheKey, nextResults);
+          if (!nextResults.warnings?.length) searchResultCacheRef.current.set(cacheKey, nextResults);
           return nextResults;
         })
       );
@@ -1323,6 +1341,8 @@ function App() {
         if (!matchTypes) return result;
 
         return {
+          genres: matchTypes.includes("GENRE") ? result.genres ?? [] : [],
+          tags: matchTypes.includes("TAG") ? result.tags ?? [] : [],
           anime: matchTypes.includes("ANIME") ? result.anime : [],
           manga: matchTypes.includes("MANGA") ? result.manga : [],
           characters: matchTypes.includes("CHARACTER") ? result.characters ?? [] : [],
@@ -1351,6 +1371,8 @@ function App() {
         if (activeResults.studios?.length) matchTypes.push("STUDIO");
         if (activeResults.songs?.length) matchTypes.push("SONG");
         if (activeResults.artists?.length) matchTypes.push("ARTIST");
+        if (activeResults.genres?.length) matchTypes.push("GENRE");
+        if (activeResults.tags?.length) matchTypes.push("TAG");
         setActiveSearchResolution({
           query: activeQuery.trim(),
           matchTypes,
@@ -1558,6 +1580,27 @@ function App() {
       showSyncToast("error", "List update failed", `Failed to add ${title} to your list.`);
     }
   };
+
+  useEffect(() => {
+    const invalidateSession = () => {
+      libraryAccountGenerationRef.current += 1;
+      setAuthUser(null);
+      setShowTutorial(false);
+      setTrackedEntries([]);
+      setTrackedMangaEntries([]);
+      setSearchQuery("");
+      setResolvedSearchTerms([]);
+      setActiveSearchResolution(null);
+      setResults(EMPTY_MEDIA_SEARCH_RESULTS);
+      setSelectedAnimeId(null);
+      setSelectedStudio(null);
+      setDetailsHistory([]);
+      setCurrentView("home");
+      showSyncToast("warning", "Sign in again", "Your session changed or expired. Sign in again to continue.");
+    };
+    window.addEventListener("seenary:session-invalidated", invalidateSession);
+    return () => window.removeEventListener("seenary:session-invalidated", invalidateSession);
+  }, [showSyncToast]);
 
   const handleLogout = async () => {
     await window.api.logout();
@@ -1860,6 +1903,18 @@ function App() {
     });
   }, [trayAccountId]);
 
+  const releaseReminders = useReleaseReminders({
+    accountId: authUser?.id ?? null,
+    enabled: settings.releaseRemindersEnabled && !checkingSession,
+    groups: settings.releaseReminderGroups,
+    entries: [...privacySafeTrackedEntries, ...privacySafeTrackedMangaEntries],
+    language: settings.titleLanguage, hideAdult: settings.hideAdultContent,
+    onOpen: handleOpenMediaDetails,
+    onHistory: notice => setNotifications(current => [{ id: Date.now(), kind: 'success' as const, title: notice.title, message: notice.message, createdAt: new Date().toISOString(), read: false }, ...current].slice(0, 30)),
+  });
+
+  if (recoveryLink) return <PasswordRecovery link={recoveryLink} onBack={() => window.location.reload()} />;
+
   if (checkingSession) {
     return (
       <div className="h-screen w-screen bg-transparent max-sm:h-dvh">
@@ -1949,6 +2004,7 @@ function App() {
                 hideMyListShortcut={isLibraryLensVisible}
               />
 
+              <ReleaseNotification notice={releaseReminders.notice} onOpen={releaseReminders.open} onDismiss={releaseReminders.dismiss} />
               <SyncToast
                 key={syncToast?.id ?? "no-sync-toast"}
                 toast={syncToast}
@@ -2036,6 +2092,7 @@ function App() {
                   />
                   ) : currentView === "settings" ? (
                     <SettingsPage
+                    onTestReleaseNotification={releaseReminders.test}
                     username={authUser.username}
                     settings={settings}
                     onUpdateSettings={handleUpdateSettings}
@@ -2115,8 +2172,7 @@ function App() {
                               key={`${warning.provider}:${warning.message}`}
                               className="rounded-2xl border border-amber-300/15 bg-amber-300/[0.06] px-4 py-3 text-sm text-amber-100/70"
                             >
-                              {warning.message} Title, character, and studio results are
-                              still available.
+                              {warning.message}
                             </div>
                           ))}
 
@@ -2250,6 +2306,22 @@ function App() {
                               </SearchResultSection>
                             </div>
                           )}
+
+                          {(['genres', 'tags'] as const).map((kind, index) => privacySafeResults[kind].length > 0 && (
+                            <div key={kind} style={{ order: 7 + index }}>
+                              <SearchResultSection title={kind === 'genres' ? 'Genre matches' : 'Tag matches'} emptyMessage="No matches" results={privacySafeResults[kind]}>
+                                <div className="flex flex-col gap-6">
+                                  {(['ANIME', 'MANGA'] as const).map(type => {
+                                    const media = privacySafeResults[kind].filter(item => item.type === type);
+                                    return media.length > 0 && <div key={type}>
+                                      <h3 className="mb-3 text-sm font-medium text-white/55">{type === 'ANIME' ? 'Anime' : 'Manga'}</h3>
+                                      <ResultsGrid results={media} onSelectMedia={id => handleOpenMediaDetails(id, type)} trackedEntries={type === 'ANIME' ? privacySafeTrackedEntries : privacySafeTrackedMangaEntries} onQuickAdd={handleQuickAddToList} onEditEntry={setEditingListEntry} titleLanguage={settings.titleLanguage} />
+                                    </div>;
+                                  })}
+                                </div>
+                              </SearchResultSection>
+                            </div>
+                          ))}
 
                           {showAnimeSearchSection && (
                             <div className={libraryMediaType === "MANGA" ? "order-2" : "order-1"}>
@@ -2558,6 +2630,8 @@ function formatPossessive(value: string) {
 function mergeMediaSearchResults(
   resultSets: MediaSearchResults[]
 ): MediaSearchResults {
+  const genres = new Map<string, SearchMedia>();
+  const tags = new Map<string, SearchMedia>();
   const anime = new Map<number, SearchMedia>();
   const manga = new Map<number, SearchMedia>();
   const characters = new Map<string, CharacterSearchResult>();
@@ -2567,6 +2641,8 @@ function mergeMediaSearchResults(
   const warnings = new Map<string, NonNullable<MediaSearchResults["warnings"]>[number]>();
 
   for (const resultSet of resultSets) {
+    for (const media of resultSet.genres ?? []) genres.set(`${media.type}:${media.id}`, media);
+    for (const media of resultSet.tags ?? []) tags.set(`${media.type}:${media.id}`, media);
     for (const media of resultSet.anime) {
       anime.set(media.id, media);
     }
@@ -2597,6 +2673,8 @@ function mergeMediaSearchResults(
   }
 
   return {
+    genres: Array.from(genres.values()),
+    tags: Array.from(tags.values()),
     anime: Array.from(anime.values()),
     manga: Array.from(manga.values()),
     characters: Array.from(characters.values()),
@@ -2715,6 +2793,9 @@ function normalizeAppSettings(value: Partial<AppSettings> | null | undefined): A
     startView: startViews.includes(value?.startView as AppSettings["startView"])
       ? (value?.startView as AppSettings["startView"])
       : DEFAULT_APP_SETTINGS.startView,
+    releaseRemindersEnabled: value?.releaseRemindersEnabled !== false,
+    releaseReminderMinutes: Array.isArray(value?.releaseReminderMinutes) ? [...new Set((value.releaseReminderMinutes as number[]).filter(minutes => [1440, 720, 360, 60, 30, 15, 0].includes(minutes)))] : [60, 0],
+    releaseReminderGroups: normalizeReminderGroups(value?.releaseReminderGroups, value?.releaseReminderMinutes),
     shareAnonymousUsageStatistics: value?.shareAnonymousUsageStatistics === true,
     analyticsConsentDecided: value?.analyticsConsentDecided === true,
   };

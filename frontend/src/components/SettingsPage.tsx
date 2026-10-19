@@ -1,3 +1,7 @@
+import { RecommendationPreferences } from './RecommendationPreferences';
+import type { ReleaseReminderGroups } from '../utils/releaseReminderSettings';
+import { RecoveryEmail } from './RecoveryEmail';
+import { PasswordSettings } from './PasswordSettings';
 import { exportDiagnostics } from '../utils/diagnostics';
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ComponentType, type ReactNode, type SVGProps } from "react";
 import {
@@ -5,6 +9,7 @@ import {
   ArrowPathIcon,
   ArrowUpTrayIcon,
   ArrowsRightLeftIcon,
+  BellAlertIcon,
   BookmarkIcon,
   BugAntIcon,
   ChartBarSquareIcon,
@@ -52,6 +57,9 @@ export type CardDensity = "comfortable" | "balanced" | "compact";
 export type DiscoverDensity = CardDensity;
 
 export type AppSettings = {
+  releaseRemindersEnabled: boolean;
+  releaseReminderMinutes: number[];
+  releaseReminderGroups: ReleaseReminderGroups;
   themeAccent: ThemeAccent;
   customAccentColor: string;
   titleLanguage: TitleLanguage;
@@ -153,6 +161,7 @@ type MalLinkConflict = {
 };
 
 type SettingsPageProps = {
+  onTestReleaseNotification?: (kind?: 'episode' | 'premiere' | 'finale') => void;
   username: string;
   settings: AppSettings;
   onUpdateSettings: (settings: Partial<AppSettings>) => void | Promise<void>;
@@ -292,7 +301,7 @@ type SettingsPageProps = {
   }>;
 };
 
-type SettingsSectionId = "appearance" | "home" | "content" | "account" | "sync" | "data" | "general";
+type SettingsSectionId = "appearance" | "home" | "content" | "account" | "sync" | "data" | "general" | "developer" | "recommendations";
 type SyncActivityTab = "pending" | "completed" | "failed" | "pulled" | "excluded";
 type DesktopShortcutState = {
   available: boolean;
@@ -616,14 +625,17 @@ const SETTINGS_OPEN_SECTION_KEY = "seenary.settings.open-section";
 const SETTINGS_OPEN_SECTION_LEGACY_KEY = "media-tracker.settings.open-section";
 const SETTINGS_SECTION_SCROLL_OFFSET = 88;
 const MIN_DESKTOP_WINDOW_SIZE = { width: 900, height: 600 };
+const IS_DEVELOPER_BUILD = __APP_VERSION__.endsWith('-dev');
 const SETTINGS_SECTION_IDS: SettingsSectionId[] = [
   "general",
   "appearance",
   "content",
+  "recommendations",
   "home",
   "account",
   "sync",
   "data",
+  ...(IS_DEVELOPER_BUILD ? ["developer" as const] : []),
 ];
 
 function compareReleaseVersions(left: string, right: string) {
@@ -719,6 +731,7 @@ function readStoredSettingsSection(): SettingsSectionId {
 }
 
 export function SettingsPage({
+  onTestReleaseNotification,
   username,
   settings,
   onUpdateSettings,
@@ -928,6 +941,8 @@ export function SettingsPage({
     conflict: null,
   });
   const [localCredentialsConfirmed, setLocalCredentialsConfirmed] = useState<boolean | null>(null);
+  const [recommendationCounts, setRecommendationCounts] = useState<{ hidden: number; dislikes: number } | null>(null);
+  const [recoveryEmailAdded, setRecoveryEmailAdded] = useState<boolean | null>(null);
   const [unlinkProvider, setUnlinkProvider] = useState<"anilist" | "mal" | null>(null);
   const [unlinkPassword, setUnlinkPassword] = useState("");
   const [unlinkPasswordConfirmation, setUnlinkPasswordConfirmation] = useState("");
@@ -1643,7 +1658,7 @@ export function SettingsPage({
       }
 
       if (result.localCredentialsConfirmed !== undefined) {
-        setLocalCredentialsConfirmed(result.localCredentialsConfirmed);
+        setLocalCredentialsConfirmed(result.localCredentialsConfirmed !== false);
       }
 
       setAniListLink((current) => ({
@@ -1680,7 +1695,7 @@ export function SettingsPage({
       }
 
       if (result.localCredentialsConfirmed !== undefined) {
-        setLocalCredentialsConfirmed(result.localCredentialsConfirmed);
+        setLocalCredentialsConfirmed(result.localCredentialsConfirmed !== false);
       }
 
       setMalLink((current) => ({
@@ -2147,7 +2162,8 @@ export function SettingsPage({
     setUnlinkFeedback(null);
 
     try {
-      if (isSettingUnlinkPassword) {
+      const combinedSetup = isSettingUnlinkPassword && Boolean(window.api.setPasswordAndUnlink);
+      if (isSettingUnlinkPassword && !combinedSetup) {
         const passwordResult = await window.api.setLocalPassword(unlinkPassword);
         if (!passwordResult.ok) {
           setUnlinkFeedback(passwordResult.message);
@@ -2157,8 +2173,9 @@ export function SettingsPage({
         setIsSettingUnlinkPassword(false);
       }
 
-      const result =
-        unlinkProvider === "mal"
+      const result = combinedSetup
+        ? await window.api.setPasswordAndUnlink!(unlinkProvider, unlinkPassword)
+        : unlinkProvider === "mal"
           ? await window.api.unlinkMalAccount(unlinkPassword)
           : await window.api.unlinkAniListAccount(unlinkPassword);
 
@@ -2167,6 +2184,7 @@ export function SettingsPage({
         return;
       }
 
+      if (window.api.setPasswordAndUnlink) { window.location.reload(); return; }
       setLocalCredentialsConfirmed(true);
       const feedback = { kind: "success" as const, message: result.message };
       const provider = unlinkProvider;
@@ -2595,22 +2613,15 @@ export function SettingsPage({
               description="App information, startup behavior, shortcuts, and Tutorial access."
               summary={[
                 `Version ${APP_VERSION}`,
-                settings.shareAnonymousUsageStatistics
-                  ? "Anonymous statistics on"
-                  : "Anonymous statistics off",
-                ...(window.desktopStartup && desktopStartup.available
-                  ? [desktopStartup.openAtLogin ? "Launches at login" : "Manual launch"]
-                  : []),
                 ...(desktopShortcut.available
-                  ? [
-                      desktopShortcut.loading
-                        ? "Shortcut loading..."
-                        : desktopShortcut.enabled && desktopShortcut.accelerator
-                          ? `Shortcut ${desktopShortcut.accelerator}`
-                          : "Shortcut disabled",
-                    ]
+                  ? [desktopShortcut.loading ? "Shortcut loading..." : desktopShortcut.enabled && desktopShortcut.accelerator ? `Shortcut ${desktopShortcut.accelerator}` : "Shortcut disabled"]
                   : []),
-                "Welcome replay",
+                settings.shareAnonymousUsageStatistics ? "Anonymous statistics on" : "Anonymous statistics off",
+                ...(window.desktopStartup
+                  ? [desktopStartup.loading ? "Startup loading..." : !desktopStartup.available ? "Launch at login unavailable" : desktopStartup.openAtLogin ? "Launches at login" : "Manual launch"]
+                  : []),
+                "Tutorial replay",
+                "Reset preferences",
               ]}
               open={openSection === "general"}
               onToggle={() => toggleSection("general")}
@@ -2625,6 +2636,125 @@ export function SettingsPage({
                   title="About Seenary"
                   description="Quick app information for this install."
                 />
+
+              <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <InfoCard label="Version" value={APP_VERSION} />
+                  <InfoCard label="Profile" value={username} />
+                  {desktopEnvironment.platform && (
+                    <>
+                      <InfoCard
+                        label="Platform"
+                        value={formatDesktopPlatform(desktopEnvironment.platform)}
+                      />
+                      <InfoCard
+                        label="Architecture"
+                        value={formatArchitecture(desktopEnvironment.architecture)}
+                      />
+                    </>
+                  )}
+                  {desktopEnvironment.platform === "linux" && (
+                    <>
+                      <InfoCard
+                        label="Desktop"
+                        value={desktopEnvironment.desktopEnvironment || "Unknown"}
+                      />
+                      <InfoCard
+                        label="Display system"
+                        value={
+                          desktopEnvironment.loading
+                            ? "Detecting..."
+                            : formatDisplayBackend(desktopEnvironment.displayBackend)
+                        }
+                      />
+                    </>
+                  )}
+                </div>
+
+                {window.desktopUpdater && (
+                  <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.025] p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-white/80">App updates</p>
+                        <p className="mt-1 text-xs leading-5 text-white/45">
+                          Check GitHub for a newer Seenary release without opening the tray menu.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void checkForDesktopUpdates()}
+                        disabled={updateCheckState.checking}
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-2xl border border-[var(--app-accent)]/30 bg-[var(--app-accent-soft)] px-4 py-2.5 text-sm font-medium text-white/85 transition hover:border-[var(--app-accent)]/50 hover:bg-[var(--app-accent-soft)]/80 hover:text-white focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]/55 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        <ArrowPathIcon
+                          className={`h-4 w-4 ${updateCheckState.checking ? "animate-spin" : ""}`}
+                        />
+                        {updateCheckState.checking ? "Checking..." : "Check for updates"}
+                      </button>
+                    </div>
+                    {updateCheckState.feedback && (
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <p
+                          role="status"
+                          className={`text-xs ${
+                            updateCheckState.feedback.kind === "success"
+                              ? "text-emerald-200/75"
+                              : "text-rose-200/80"
+                          }`}
+                        >
+                          {updateCheckState.feedback.message}
+                        </p>
+                        {updateCheckState.feedback.downloadUrl && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              window.open(
+                                updateCheckState.feedback?.downloadUrl,
+                                "_blank",
+                                "noopener,noreferrer"
+                              )
+                            }
+                            className="text-xs font-semibold text-[var(--app-accent)] underline decoration-[var(--app-accent)]/40 underline-offset-4 hover:text-white"
+                          >
+                            Get update
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {desktopEnvironment.platform && (
+                  <div className="mt-4 flex flex-col gap-3 rounded-3xl border border-white/10 bg-white/[0.025] p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <button
+                      type="button"
+                      onClick={() => void copyBugReportInfo()}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.05] px-4 py-2.5 text-sm font-medium text-white/70 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-white/55"
+                    >
+                      {bugReportCopyState === "copied" ? (
+                        <CheckIcon className="h-4 w-4 text-emerald-300" />
+                      ) : (
+                        <ClipboardDocumentIcon className="h-4 w-4" />
+                      )}
+                      {bugReportCopyState === "copied"
+                        ? "Information copied"
+                        : bugReportCopyState === "error"
+                          ? "Copy failed"
+                          : "Copy app & system information"}
+                    </button>
+
+                    <a
+                      href={GITHUB_ISSUES_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[var(--app-accent)]/30 bg-[var(--app-accent-soft)] px-4 py-2.5 text-sm font-medium text-white/85 transition hover:border-[var(--app-accent)]/50 hover:bg-[var(--app-accent-soft)]/80 hover:text-white focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]/55"
+                    >
+                      <BugAntIcon className="h-4 w-4" />
+                      Report on GitHub
+                      <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+                    </a>
+                  </div>
+                )}
+              </div>
 
                 {desktopShortcut.available && (
                 <div>
@@ -2757,125 +2887,6 @@ export function SettingsPage({
                 </div>
               )}
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <InfoCard label="Version" value={APP_VERSION} />
-                  <InfoCard label="Profile" value={username} />
-                  {desktopEnvironment.platform && (
-                    <>
-                      <InfoCard
-                        label="Platform"
-                        value={formatDesktopPlatform(desktopEnvironment.platform)}
-                      />
-                      <InfoCard
-                        label="Architecture"
-                        value={formatArchitecture(desktopEnvironment.architecture)}
-                      />
-                    </>
-                  )}
-                  {desktopEnvironment.platform === "linux" && (
-                    <>
-                      <InfoCard
-                        label="Desktop"
-                        value={desktopEnvironment.desktopEnvironment || "Unknown"}
-                      />
-                      <InfoCard
-                        label="Display system"
-                        value={
-                          desktopEnvironment.loading
-                            ? "Detecting..."
-                            : formatDisplayBackend(desktopEnvironment.displayBackend)
-                        }
-                      />
-                    </>
-                  )}
-                </div>
-
-                {window.desktopUpdater && (
-                  <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.025] p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-white/80">App updates</p>
-                        <p className="mt-1 text-xs leading-5 text-white/45">
-                          Check GitHub for a newer Seenary release without opening the tray menu.
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void checkForDesktopUpdates()}
-                        disabled={updateCheckState.checking}
-                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-2xl border border-[var(--app-accent)]/30 bg-[var(--app-accent-soft)] px-4 py-2.5 text-sm font-medium text-white/85 transition hover:border-[var(--app-accent)]/50 hover:bg-[var(--app-accent-soft)]/80 hover:text-white focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]/55 disabled:cursor-wait disabled:opacity-60"
-                      >
-                        <ArrowPathIcon
-                          className={`h-4 w-4 ${updateCheckState.checking ? "animate-spin" : ""}`}
-                        />
-                        {updateCheckState.checking ? "Checking..." : "Check for updates"}
-                      </button>
-                    </div>
-                    {updateCheckState.feedback && (
-                      <div className="mt-3 flex flex-wrap items-center gap-3">
-                        <p
-                          role="status"
-                          className={`text-xs ${
-                            updateCheckState.feedback.kind === "success"
-                              ? "text-emerald-200/75"
-                              : "text-rose-200/80"
-                          }`}
-                        >
-                          {updateCheckState.feedback.message}
-                        </p>
-                        {updateCheckState.feedback.downloadUrl && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              window.open(
-                                updateCheckState.feedback?.downloadUrl,
-                                "_blank",
-                                "noopener,noreferrer"
-                              )
-                            }
-                            className="text-xs font-semibold text-[var(--app-accent)] underline decoration-[var(--app-accent)]/40 underline-offset-4 hover:text-white"
-                          >
-                            Get update
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {desktopEnvironment.platform && (
-                  <div className="mt-4 flex flex-col gap-3 rounded-3xl border border-white/10 bg-white/[0.025] p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <button
-                      type="button"
-                      onClick={() => void copyBugReportInfo()}
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.05] px-4 py-2.5 text-sm font-medium text-white/70 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-white/55"
-                    >
-                      {bugReportCopyState === "copied" ? (
-                        <CheckIcon className="h-4 w-4 text-emerald-300" />
-                      ) : (
-                        <ClipboardDocumentIcon className="h-4 w-4" />
-                      )}
-                      {bugReportCopyState === "copied"
-                        ? "Information copied"
-                        : bugReportCopyState === "error"
-                          ? "Copy failed"
-                          : "Copy app & system information"}
-                    </button>
-
-                    <a
-                      href={GITHUB_ISSUES_URL}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[var(--app-accent)]/30 bg-[var(--app-accent-soft)] px-4 py-2.5 text-sm font-medium text-white/85 transition hover:border-[var(--app-accent)]/50 hover:bg-[var(--app-accent-soft)]/80 hover:text-white focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]/55"
-                    >
-                      <BugAntIcon className="h-4 w-4" />
-                      Report on GitHub
-                      <ArrowTopRightOnSquareIcon className="h-4 w-4" />
-                    </a>
-                  </div>
-                )}
-              </div>
-
               <div>
                 <SectionHeading
                   icon={ShieldCheckIcon}
@@ -2990,16 +3001,18 @@ export function SettingsPage({
               description="Visual customization for the app."
               summary={[
                 accentSummary,
-                `${overlayOpacity}% opacity`,
+                `${OVERLAY_BACKGROUND_OPTIONS.find(option => option.value === settings.overlayBackground)?.label ?? "Solid"} surface`,
                 `${getNavbarStyleLabel(settings.navbarStyle)} navbar`,
                 `${getBrowseCardStyleLabel(settings.browseCardStyle)} cards`,
+                `${overlayOpacity}% opacity`,
                 `${backgroundDim}% dim`,
                 `${getAnimationLevelLabel(settings.animationLevel)} motion`,
-                settings.backgroundGlows ? "Background bubbles on" : "Background bubbles off",
                 settings.compactMode ? "Compact mode on" : "Compact mode off",
+                settings.backgroundGlows ? "Background bubbles on" : "Background bubbles off",
                 `${getCardDensityLabel(settings.homeDensity)} Personal page`,
                 `${getDiscoverDensityLabel(settings.discoverDensity)} Discover page`,
                 `${getCardDensityLabel(settings.myListDensity)} My List page`,
+                ...(window.desktopWindow ? [desktopWindow.loading ? "Window layout loading..." : `${WINDOW_PRESET_OPTIONS.find(option => option.value === desktopWindow.preset)?.label ?? "Custom"} window`] : []),
               ]}
               open={openSection === "appearance"}
               onToggle={() => toggleSection("appearance")}
@@ -3623,6 +3636,7 @@ export function SettingsPage({
               description="Control anime title display and what appears in discovery surfaces."
               summary={[
                 titleLabel,
+                settings.releaseRemindersEnabled && Object.values(settings.releaseReminderGroups).some(group => group.enabled && group.minutes.length > 0) ? "Notifications on" : "Notifications off",
                 settings.hideAdultContent ? "18+ hidden" : "18+ visible",
               ]}
               open={openSection === "content"}
@@ -3670,6 +3684,40 @@ export function SettingsPage({
                 </div>
               </div>
 
+              <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+                <ToggleSetting icon={BellAlertIcon} title="Release reminders" neutral description="Receive desktop notifications for upcoming releases from titles marked Watching, Reading, or Planned in your library. Choose when to be notified below. Seenary must be running." checked={settings.releaseRemindersEnabled} onChange={value => onUpdateSettings({ releaseRemindersEnabled: value })} />
+                {([
+                  { category: "episodes", title: "New episodes", description: "Reminders for episodes between the premiere and finale." },
+                  { category: "premieres", title: "Starts airing", description: "Know when a series premieres. Replaces first-episode reminders." },
+                  { category: "finales", title: "Finishes airing", description: "Follow the final episode and know when a series finishes airing." },
+                  { category: "manga", title: "Manga publications", description: "Reminders count down to the start of the publication date in your local time. Exact chapter release times are unavailable." },
+                ] as const).map(({ category, title, description }) => (
+                <fieldset disabled={!settings.releaseRemindersEnabled} key={category} className="mt-5 border-t border-white/10 pt-5 disabled:opacity-40">
+                  <legend className="sr-only">{title} reminders</legend>
+                  <div className="flex items-center justify-between gap-4">
+                    <div><p className="text-sm font-semibold text-white">{title}</p><p className="mt-1 text-xs leading-5 text-white/40">{description}</p></div>
+                    <button type="button" tabIndex={-1} role="switch" aria-label={title + " reminders"} aria-checked={settings.releaseReminderGroups[category].enabled}
+                      onClick={() => onUpdateSettings({ releaseReminderGroups: { ...settings.releaseReminderGroups, [category]: { ...settings.releaseReminderGroups[category], enabled: !settings.releaseReminderGroups[category].enabled } } })}
+                      className={`relative h-6 w-11 shrink-0 rounded-full border transition focus:outline-none disabled:cursor-not-allowed ${settings.releaseReminderGroups[category].enabled ? "border-[var(--app-accent)] bg-[var(--app-accent-soft)]" : "border-white/15 bg-white/5"}`}>
+                      <span className={`absolute left-0.5 top-0.5 h-[18px] w-[18px] rounded-full transition-transform ${settings.releaseReminderGroups[category].enabled ? "translate-x-5 bg-[var(--app-accent)]" : "translate-x-0 bg-white/40"}`} />
+                    </button>
+                  </div>
+                  <fieldset disabled={!settings.releaseReminderGroups[category].enabled} className="disabled:opacity-40"><legend className="sr-only">{title} reminder times</legend>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {[{ minutes: 1440, label: "1 D before" }, { minutes: 720, label: "12 H before" }, { minutes: 360, label: "6 H before" }, { minutes: 60, label: "1 H before" }, { minutes: 30, label: "30 Min before" }, { minutes: 15, label: "15 Min before" }, { minutes: 0, label: "At release time" }].map(({ minutes, label }) => (
+                      <label key={minutes} className={`inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${settings.releaseReminderGroups[category].minutes.includes(minutes) ? "border-[var(--app-accent)]/50 bg-[var(--app-accent-soft)] text-white" : "border-white/10 bg-white/[0.03] text-white/50 hover:bg-white/5"}`}>
+                        <input type="checkbox" checked={settings.releaseReminderGroups[category].minutes.includes(minutes)} className="h-3.5 w-3.5 accent-[var(--app-accent)] [color-scheme:dark]"
+                          onChange={event => onUpdateSettings({ releaseReminderGroups: { ...settings.releaseReminderGroups, [category]: { ...settings.releaseReminderGroups[category], minutes: event.target.checked ? [...settings.releaseReminderGroups[category].minutes, minutes] : settings.releaseReminderGroups[category].minutes.filter(value => value !== minutes) } } })} />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-xs leading-5 text-white/40">{settings.releaseReminderGroups[category].minutes.length ? "Each selected time sends one reminder per event." : "Select at least one time to receive reminders."}</p>
+                  </fieldset>
+                </fieldset>
+                ))}
+              </div>
+
               <div>
                 <SectionHeading
                   icon={EyeSlashIcon}
@@ -3677,7 +3725,7 @@ export function SettingsPage({
                   description="Choose which AniList content can appear while browsing."
                 />
 
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3">
                   <ToggleSetting
                     icon={EyeSlashIcon}
                     title="Hide 18+ content"
@@ -3690,6 +3738,15 @@ export function SettingsPage({
                 </div>
               </div>
             </div>
+            </AccordionSection>
+          </div>
+
+          <div ref={rememberSectionRef("recommendations")} className="scroll-mt-24">
+            <AccordionSection icon={SparklesIcon} title="Recommendation preferences" scope="Account"
+              description="Review and undo your Not Interested choices and disliked suggestions."
+              summary={recommendationCounts ? [`${recommendationCounts.hidden} Not Interested`, `${recommendationCounts.dislikes} Dislikes`] : ["Checking your choices"]}
+              open={openSection === "recommendations"} onToggle={() => toggleSection("recommendations")}>
+              <RecommendationPreferences key={username} titleLanguage={settings.titleLanguage} hideAdultContent={settings.hideAdultContent} onCounts={setRecommendationCounts} />
             </AccordionSection>
           </div>
 
@@ -3811,6 +3868,8 @@ export function SettingsPage({
               scope="Account"
               description="Manage your local password and connected external accounts."
               summary={[
+                localCredentialsConfirmed === null ? "Checking password" : localCredentialsConfirmed ? "Password set" : "Password not set",
+                recoveryEmailAdded === null ? "Checking email" : recoveryEmailAdded ? "Email added" : "Email not added",
                 aniListLink.loading
                   ? "Checking AniList"
                   : aniListLink.linked
@@ -3825,28 +3884,10 @@ export function SettingsPage({
               open={openSection === "account"}
               onToggle={() => toggleSection("account")}
             >
-            <div className="mb-5 rounded-3xl border border-white/10 bg-white/[0.03] p-5">
-              <div className="flex items-start gap-4">
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-2.5 text-white/65">
-                  <KeyIcon className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="font-semibold text-white">
-                    {localCredentialsConfirmed === true
-                      ? "Local password confirmed"
-                      : localCredentialsConfirmed === false
-                        ? "Local password needed"
-                        : "Local password not yet verified"}
-                  </p>
-                  <p className="mt-2 text-sm leading-6 text-white/45">
-                    {localCredentialsConfirmed === true
-                      ? "Your local password can safely authorize account unlinking."
-                      : localCredentialsConfirmed === false
-                        ? "This profile was created through an external sign-in. You will create a local password before unlinking it."
-                        : "Sign in once with your existing local password, or create a replacement during unlinking."}
-                  </p>
-                </div>
-              </div>
+            <SectionHeading icon={KeyIcon} title="Seenary account" description="Your password and recovery options." />
+            <div className="mb-8 divide-y divide-white/10 overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03]">
+              <PasswordSettings hasPassword={localCredentialsConfirmed} onPasswordSet={() => setLocalCredentialsConfirmed(true)} />
+              <RecoveryEmail hasPassword={localCredentialsConfirmed} onEmailStatusChange={setRecoveryEmailAdded} />
             </div>
             <div>
               <SectionHeading
@@ -4109,11 +4150,10 @@ export function SettingsPage({
                   ? "Loading"
                   : syncStatus.linked
                   ? syncStatus.autoSyncEnabled
-                    ? "Auto on"
-                    : "Auto off"
-                  : "Auto unavailable",
+                    ? "Auto sync on"
+                    : "Auto sync off"
+                  : "Auto sync unavailable",
                 syncStatus.loading ? "Checking queue" : `${syncStatus.pendingCount} queued`,
-                syncStatus.loading ? "Please wait" : syncStatus.linked ? manualSyncTargetsLabel : "Unavailable",
               ]}
               open={openSection === "sync"}
               onToggle={() => toggleSection("sync")}
@@ -4292,7 +4332,7 @@ export function SettingsPage({
               title="Import & Data"
               scope="Account and portable"
               description="Bring anime data into the app and manage local list data."
-              summary={["Portable backups", "AniList and MAL import", "Clear lists"]}
+              summary={["Portable backups", "AniList import", "MAL import", "Text import", "PDF import", "Clear lists & delete account"]}
               open={openSection === "data"}
               onToggle={() => toggleSection("data")}
             >
@@ -4799,6 +4839,14 @@ export function SettingsPage({
                       </button>
                     ) : (
                       <div className="mt-4 rounded-2xl border border-rose-300/25 bg-black/25 p-4">
+                        {localCredentialsConfirmed === false ? (
+                          <>
+                            <p className="mb-4 text-sm leading-6 text-rose-50">You joined through an external service and have not set a Seenary password. Set one below, then sign in again to confirm deletion. Background pulls do not need to finish before you delete your account.</p>
+                            <PasswordSettings hasPassword={false} onPasswordSet={() => setLocalCredentialsConfirmed(true)} />
+                            <button type="button" onClick={() => setIsDeleteAccountArmed(false)} className="text-sm text-white/70">Cancel deletion</button>
+                          </>
+                        ) : (
+                          <>
                         <label className="block text-sm font-semibold text-rose-50" htmlFor="delete-account-confirmation">
                           Type <span className="select-all text-white">{username}</span> to confirm
                         </label>
@@ -4866,6 +4914,8 @@ export function SettingsPage({
                         {deleteAccountFeedback && (
                           <p className="mt-3 text-sm font-medium text-rose-200">{deleteAccountFeedback}</p>
                         )}
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
@@ -4874,6 +4924,25 @@ export function SettingsPage({
             </div>
             </AccordionSection>
           </div>
+          {IS_DEVELOPER_BUILD && <div ref={rememberSectionRef("developer")} className="scroll-mt-24">
+            <AccordionSection icon={BellAlertIcon} title="Developer functions" scope="Development build"
+              description="Preview and test Seenary features." summary={[__APP_VERSION__, "Episode preview", "Premiere preview", "Finale preview"]}
+              open={openSection === "developer"} onToggle={() => toggleSection("developer")}>
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+                <div><p className="font-semibold text-white">Release notification preview</p>
+                  <p className="mt-2 max-w-xl text-sm leading-6 text-white/50">Show a random library title in your preferred title language. Enable release reminders in Content to test the popup.</p></div>
+                <div className="flex flex-wrap gap-2">
+                  {([{ kind: 'episode', label: 'Test notification' }, { kind: 'premiere', label: 'Test starts airing' }, { kind: 'finale', label: 'Test finished airing' }] as const).map(({kind, label}) => (
+                    <button key={kind} type="button" tabIndex={-1} disabled={!settings.releaseRemindersEnabled || !onTestReleaseNotification}
+                      onClick={() => onTestReleaseNotification?.(kind)}
+                      className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/10 focus:outline-none disabled:opacity-40">
+                      <BellAlertIcon className="h-4 w-4" />{label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </AccordionSection>
+          </div>}
         </div>
       </div>
 
@@ -5200,12 +5269,6 @@ export function SettingsPage({
         feedback={unlinkFeedback}
         onPasswordChange={setUnlinkPassword}
         onPasswordConfirmationChange={setUnlinkPasswordConfirmation}
-        onSettingPasswordChange={(value) => {
-          setIsSettingUnlinkPassword(value);
-          setUnlinkPassword("");
-          setUnlinkPasswordConfirmation("");
-          setUnlinkFeedback(null);
-        }}
         onClose={closeUnlinkModal}
         onConfirm={unlinkExternalAccount}
       />
@@ -5409,19 +5472,19 @@ function AccordionSection({
   children: ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] shadow-xl">
+    <section className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] shadow-xl [contain:paint]">
       <button
         type="button"
         onClick={onToggle}
         className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left transition hover:bg-white/[0.03] focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]/55"
       >
         <div className="flex min-w-0 items-start gap-4">
-          <div className={`rounded-2xl border p-3 transition ${
+          <div className={`shrink-0 rounded-2xl border p-3 transition-colors ${
             open
               ? "border-[var(--app-accent)]/30 bg-[var(--app-accent-soft)] text-white/80"
               : "border-white/10 bg-white/5 text-white/70"
           }`}>
-            <Icon className="h-5 w-5" />
+            <Icon className="block h-5 w-5" />
           </div>
 
           <div className="min-w-0">
@@ -5510,6 +5573,7 @@ function ToggleSetting({
   disabled = false,
   onChange,
   centerIcon = false,
+  neutral = false,
   pending = false,
   pendingLabel = "Saving...",
 }: {
@@ -5520,6 +5584,7 @@ function ToggleSetting({
   disabled?: boolean;
   onChange: (checked: boolean) => void | Promise<void>;
   centerIcon?: boolean;
+  neutral?: boolean;
   pending?: boolean;
   pendingLabel?: string;
 }) {
@@ -5527,9 +5592,10 @@ function ToggleSetting({
     <button
       type="button"
       disabled={disabled}
+      tabIndex={neutral ? -1 : undefined}
       aria-busy={pending}
       onClick={() => onChange(!checked)}
-      className={`flex w-full items-center justify-between gap-4 rounded-3xl border p-5 text-left transition focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]/55 ${
+      className={`flex w-full items-center justify-between gap-4 rounded-3xl border p-5 text-left transition focus:outline-none ${neutral ? "" : "focus:ring-2 focus:ring-[var(--app-accent)]/55"} ${
         pending
           ? "cursor-progress border-[var(--app-accent)]/25 bg-[var(--app-accent-soft)]"
           : disabled
@@ -5707,7 +5773,6 @@ function ProviderUnlinkModal({
   feedback,
   onPasswordChange,
   onPasswordConfirmationChange,
-  onSettingPasswordChange,
   onClose,
   onConfirm,
 }: {
@@ -5720,7 +5785,6 @@ function ProviderUnlinkModal({
   feedback: string | null;
   onPasswordChange: (value: string) => void;
   onPasswordConfirmationChange: (value: string) => void;
-  onSettingPasswordChange: (value: boolean) => void;
   onClose: () => void;
   onConfirm: () => void | Promise<void>;
 }) {
@@ -5796,17 +5860,6 @@ function ProviderUnlinkModal({
               className="mt-2 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-[var(--app-accent)]/60 focus:ring-2 focus:ring-[var(--app-accent)]/20"
             />
           </label>
-        )}
-
-        {localCredentialsConfirmed === null && (
-          <button
-            type="button"
-            onClick={() => onSettingPasswordChange(!settingPassword)}
-            disabled={busy}
-            className="mt-4 text-left text-sm font-semibold text-[var(--app-accent)] transition hover:opacity-80 disabled:opacity-50"
-          >
-            {settingPassword ? "Use my existing local password" : "I never set one — create or replace it"}
-          </button>
         )}
 
         {mustCreatePassword && (

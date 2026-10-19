@@ -641,6 +641,11 @@ export function installApiClient() {
   }
 
   const api: ApiClient = {
+    getRecommendationPreferences: request => rpc('getRecommendationPreferences', [request]),
+    getCommunityRecommendations: request => rpc('getCommunityRecommendations', [request]),
+    getSinceYouLikedState: request => rpc('getSinceYouLikedState', [request]),
+    setSinceYouLikedFeedback: request => rpc('setSinceYouLikedFeedback', [request]),
+    setSinceYouLikedHidden: request => rpc('setSinceYouLikedHidden', [request]),
     searchMedia: (query, hideAdultContent = true, options) =>
       rpc("searchMedia", [query, hideAdultContent], {
         signal: options?.signal,
@@ -649,12 +654,14 @@ export function installApiClient() {
     getMediaPeople: (type, id, kind, page = 1) => rpc("getMediaPeople", [type, id, kind, page]),
     getDiscoverMedia: (hideAdultContent = true, mediaType) =>
       rpc("getDiscoverMedia", [hideAdultContent, mediaType], { timeoutMs: 20_000 }),
+    getDiscoverTags: (safe = true) => rpc('getDiscoverTags', [safe]),
+    getDiscoverGenres: (safe = true) => rpc('getDiscoverGenres', [safe]),
     getDiscoverShelfAnime: (shelfId, page = 1, hideAdultContent = true, mediaType = "ANIME") =>
       rpc("getDiscoverShelfAnime", [shelfId, page, hideAdultContent, mediaType], {
         timeoutMs: 20_000,
       }),
-    getReleaseCalendar: (start, end, hideAdultContent = true, mediaType = "ANIME") =>
-      rpc("getReleaseCalendar", [start, end, hideAdultContent, mediaType], { timeoutMs: 20_000 }),
+    getReleaseCalendar: (start, end, hideAdultContent = true, mediaType = "ANIME", page) =>
+      rpc("getReleaseCalendar", [start, end, hideAdultContent, mediaType, page], { timeoutMs: 20_000 }),
     getStudioMedia: (studioId, page = 1, hideAdultContent = true) =>
       rpc("getStudioMedia", [studioId, page, hideAdultContent], { timeoutMs: 20_000 }),
     getArtistMedia: (artistSlug, page = 1, hideAdultContent = true) =>
@@ -983,6 +990,14 @@ export function installApiClient() {
       return result;
     },
     unlinkMalAccount: (password) => rpc("unlinkMalAccount", [password]),
+    getRecoveryEmail: async () => ({ ok: true, configured: false }),
+    setRecoveryEmail: async () => ({ ok: false, message: 'Recovery email is available for cloud accounts.' }),
+    verifyRecoveryEmailCode: async () => ({ ok: false, message: 'Email verification is available for cloud accounts.' }),
+    resendRecoveryEmailCode: async () => ({ ok: false, message: 'Email verification is available for cloud accounts.' }),
+    verifyRecoveryEmail: async () => ({ ok: false, message: 'Open this link in the Seenary web app.' }),
+    requestPasswordReset: async () => ({ ok: false, message: 'Recovery email is available for cloud accounts.' }),
+    resetPassword: async () => ({ ok: false, message: 'Open this link in the Seenary web app.' }),
+    changePassword: (currentPassword, newPassword) => rpc("changePassword", [currentPassword, newPassword]),
     setLocalPassword: (password) => rpc("setLocalPassword", [password]),
     logout,
     exportAccountData: async () => {

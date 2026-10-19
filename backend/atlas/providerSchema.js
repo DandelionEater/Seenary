@@ -46,6 +46,7 @@ async function setupProviders(db, prefix = '') {
   return { ...repo, users: db.collection(prefix + 'users'), sessions: db.collection(prefix + 'sessions'), jobs: db.collection(prefix + 'jobs'), jobLocks: db.collection(prefix + 'jobLocks'),
     providerRefreshStates: db.collection(prefix + 'providerRefreshStates'),
     analyticsDaily: db.collection(prefix + 'analyticsDaily'), analyticsMonthly: db.collection(prefix + 'analyticsMonthly'),
+    sinceYouLikedFeedback: db.collection(prefix + 'sinceYouLikedFeedback'), sinceYouLikedHidden: db.collection(prefix + 'sinceYouLikedHidden'),
     ...Object.fromEntries(['libraryEntries', 'libraryChanges', 'libraryState', 'librarySnapshots', 'mutationReceipts', 'libraryMigrationReceipts', 'media'].map((name) => [name, db.collection(prefix + name)])) };
 }
 

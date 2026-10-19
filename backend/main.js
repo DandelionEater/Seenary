@@ -948,6 +948,10 @@ ipcMain.handle('anilist:discover-media', async (_event, payload) => {
   return await anilist.getDiscoverMedia({ hideAdultContent, mediaType: payload?.mediaType });
 });
 
+ipcMain.handle('anilist:discover-tags', (_event, safe) => anilist.getDiscoverTags(safe !== false));
+
+ipcMain.handle('anilist:discover-genres', (_event, safe) => anilist.getDiscoverGenres(safe !== false));
+
 ipcMain.handle('anilist:discover-shelf', async (_event, payload) => {
   return await anilist.getDiscoverShelfAnime({
     shelfId: payload?.shelfId,
@@ -962,7 +966,7 @@ ipcMain.handle('anilist:release-calendar', async (_event, payload) => {
     start: payload?.start,
     end: payload?.end,
     hideAdultContent: payload?.hideAdultContent,
-    mediaType: payload?.mediaType,
+    mediaType: payload?.mediaType, page: payload?.page,
   });
 });
 
@@ -2427,6 +2431,13 @@ ipcMain.handle('auth:mal-link-status', () => {
   }
 });
 
+ipcMain.handle('auth:change-password', async (_event, payload) => {
+  const session = getCurrentSession();
+  if (!session.authenticated || !session.user?.id) return { ok: false, message: 'You must be logged in.' };
+  if (!await verifyLocalPassword(session.user.id, payload?.currentPassword)) return { ok: false, message: 'Incorrect current password.' };
+  return setLocalPassword(session.user.id, payload?.newPassword);
+});
+
 ipcMain.handle('auth:set-local-password', async (_event, payload) => {
   try {
     const session = getCurrentSession();
@@ -2856,6 +2867,7 @@ function bootAppWindow() {
 app.whenReady().then(() => {
   registerAppLifecycleIpc();
   registerLayoutConfigIpc();
+  require('./releaseNotifications').registerReleaseNotificationIpc(() => mainWindow);
   bootAppWindow();
 
   app.on('activate', () => {

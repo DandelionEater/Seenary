@@ -55,8 +55,9 @@ class Collection {
   }
   find(query) {
     let rows = this.rows.filter(row => matches(row, query));
-    return { sort() { rows = rows.sort((a, b) => a._id.localeCompare(b._id)); return this; }, limit(count) { rows = rows.slice(0, count); return this; }, async toArray() { return clone(rows); } };
+    return { sort() { rows = rows.sort((a, b) => a._id.localeCompare(b._id)); return this; }, skip(count) { rows = rows.slice(count); return this; }, limit(count) { rows = rows.slice(0, count); return this; }, async toArray() { return clone(rows); } };
   }
+  async countDocuments(query) { return this.rows.filter(row => matches(row, query)).length; }
 }
 
 async function main() {

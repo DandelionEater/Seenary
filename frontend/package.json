@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:progressive-calendar": "node scripts/progressive-calendar-smoke.mjs",
     "test:franchise-library": "node scripts/franchise-library-smoke.mjs",
     "test:detail-cache": "node scripts/detail-cache-smoke.mjs",
     "test:watch-order": "node scripts/watch-order-smoke.mjs",

@@ -4,6 +4,8 @@ const HOUR = 3600000;
 function createProviderCache({ queries, now = () => Date.now(), requestSpacingMs = 1500 }) {
   const inFlight = new Map();
   let providerTail = Promise.resolve();
+  let interactiveTail = Promise.resolve();
+  let startTail = Promise.resolve();
   let lastStart = 0;
   function kindFor(key) {
     if (key.startsWith('franchise-start:')) return 'series-start';
@@ -22,23 +24,29 @@ function createProviderCache({ queries, now = () => Date.now(), requestSpacingMs
     await queries.updateOne({ _id: id, accessRevision: cached?.accessRevision || 0 },
       { $set: { lastAccessAt: new Date(now()) }, $inc: { accessRevision: 1 } });
   }
-  async function schedule(task) {
-    const run = providerTail.then(async () => {
+  async function schedule(task, { interactive = false } = {}) {
+    const run = (interactive ? interactiveTail : providerTail).then(async () => {
+      const start = startTail.then(async () => {
       const delay = Math.max(0, lastStart + requestSpacingMs - now());
       if (delay) await new Promise(resolve => setTimeout(resolve, delay));
-      lastStart = now(); return task();
+      lastStart = now();
+      });
+      startTail = start.catch(() => {});
+      await start;
+      return task();
     });
-    providerTail = run.catch(() => {});
+    if (interactive) interactiveTail = run.catch(() => {});
+    else providerTail = run.catch(() => {});
     return run;
   }
-  async function fetchCached(key, fetcher, ttl, consume, { staleWhileRevalidate = false } = {}) {
+  async function fetchCached(key, fetcher, ttl, consume, { staleWhileRevalidate = false, interactive = false } = {}) {
     if (staleWhileRevalidate) {
       const id = crypto.createHash('sha256').update(key).digest('hex');
       const cached = await queries.findOne({ _id: id });
       if (cached?.payload && new Date(cached.freshUntil).getTime() <= now()) {
         await touch(id, cached);
         const refreshing = new Date(cached.retryAt || 0).getTime() <= now();
-        if (refreshing) void fetchCached(key, fetcher, ttl, consume).catch(() => {});
+        if (refreshing) void fetchCached(key, fetcher, ttl, consume, { interactive }).catch(() => {});
         return { payload: cached.payload, stale: true, refreshing };
       }
     }
@@ -64,10 +72,11 @@ function createProviderCache({ queries, now = () => Date.now(), requestSpacingMs
       }
       try {
         const observedAt = now();
-        const payload = await schedule(fetcher);
+        const payload = await schedule(fetcher, { interactive });
         if (calculateObjectSize({ payload }) > 12 * 1024 * 1024) throw new Error('Metadata response exceeds storage limit.');
         await consume(payload, observedAt);
-        await queries.updateOne({ _id: id, lease }, { $set: { payload, fetchedAt: new Date(observedAt), freshUntil: new Date(observedAt + ttl),
+        const lifetime = typeof ttl === 'function' ? ttl(payload) : ttl;
+        await queries.updateOne({ _id: id, lease }, { $set: { payload, fetchedAt: new Date(observedAt), freshUntil: new Date(observedAt + lifetime),
           retryAt: new Date(0), canonicalizedAt: new Date(now()) }, $unset: { lease: '', leaseUntil: '' }, $inc: { accessRevision: 1 } });
         return { payload, stale: false };
       } catch (error) {

@@ -2031,6 +2031,10 @@ async function handleRpc(method, args, req, res) {
       return await anilist.getMediaPeople(args[0], args[1], args[2], args[3]);
     case 'getDiscoverMedia':
       return await anilist.getDiscoverMedia({ hideAdultContent: args[0], mediaType: args[1] });
+    case 'getDiscoverTags':
+      return await anilist.getDiscoverTags(args[0] !== false);
+    case 'getDiscoverGenres':
+      return await anilist.getDiscoverGenres(args[0] !== false);
     case 'getDiscoverShelfAnime':
       return await anilist.getDiscoverShelfAnime({
         shelfId: args[0],
@@ -2043,7 +2047,7 @@ async function handleRpc(method, args, req, res) {
         start: args[0],
         end: args[1],
         hideAdultContent: args[2],
-        mediaType: args[3],
+        mediaType: args[3], page: args[4],
       });
     case 'getStudioMedia':
       return await anilist.getStudioMedia(args[0], args[1], {
@@ -2436,6 +2440,11 @@ async function handleRpc(method, args, req, res) {
       const result = await loginUser(args[0], args[1]);
       if (result.ok && result.user?.id) createWebSession(res, result.user.id);
       return result;
+    }
+    case 'changePassword': {
+      if (!currentSession.authenticated || !currentSession.user?.id) return { ok: false, message: 'You must be logged in.' };
+      if (!await verifyLocalPassword(currentSession.user.id, args[0])) return { ok: false, message: 'Incorrect current password.' };
+      return setLocalPassword(currentSession.user.id, args[1]);
     }
     case 'setLocalPassword': {
       if (!currentSession.authenticated || !currentSession.user?.id) {

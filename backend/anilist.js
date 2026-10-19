@@ -1,4 +1,6 @@
+const { normalizeFilters, createFilteredBrowsePager } = require('./discoverFilters');
 const fetch = require('node-fetch');
+const { searchTaxonomy, getSearchTaxonomy } = require('./searchTaxonomy');
 
 const ANILIST_URL = 'https://graphql.anilist.co';
 const ANILIST_REQUEST_TIMEOUT_MS = 15000;
@@ -6,9 +8,9 @@ const ANILIST_REQUEST_TIMEOUT_MS = 15000;
 const USER_IMPORT_NOT_FOUND_MESSAGE =
   "We couldn't find that AniList user or list. Make sure the username is typed correctly, make sure the account is public, or try another username.";
 
-async function anilistRequest(query, variables = {}, accessToken = null) {
+async function anilistRequest(query, variables = {}, accessToken = null, timeoutMs = ANILIST_REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), ANILIST_REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let res;
   let data;
 
@@ -144,6 +146,13 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function waitForSearchConnections(promise) {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => resolve({ data: { data: {} }, warnings: [{ provider: 'anilist', message: 'Character and studio matches are taking longer than usual and were skipped.' }] }), 1200);
+    promise.then(value => { clearTimeout(timer); resolve(value); });
+  });
+}
+
 async function searchMedia(search, options = {}) {
   const hideAdultContent = options.hideAdultContent !== false;
   const query = `
@@ -241,11 +250,28 @@ async function searchMedia(search, options = {}) {
     }
   `;
 
-  const data = await anilistRequestWithRetry(query, {
-    search,
-    isAdult: hideAdultContent ? false : undefined,
-  });
-  const media = data.data?.mediaPage?.media ?? [];
+  // Interactive searches must not inherit background-import retries or wait for connections.
+  const deadline = Date.now() + 8000;
+  const request = (query, variables) => anilistRequest(query, variables, null, Math.max(1, Math.min(6000, deadline - Date.now())));
+  const connectionStart = query.indexOf('      characterPage:');
+  const titlesQuery = query.slice(0, connectionStart) + '\n    }';
+  const connectionsQuery = 'query ($search: String) {\n' + query.slice(connectionStart);
+  const connectionsPromise = request(connectionsQuery, { search })
+    .then(data => ({ data, warnings: [] }))
+    .catch(() => ({ data: { data: {} }, warnings: [{ provider: 'anilist', message: 'Character and studio matches are temporarily unavailable.' }] }));
+  const [titles, taxonomy] = await Promise.allSettled([
+    request(titlesQuery, { search, isAdult: hideAdultContent ? false : undefined }),
+    searchTaxonomy(String(search || ''), options, request),
+  ]);
+  if (titles.status === 'rejected' && (taxonomy.status === 'rejected' || !taxonomy.value.media.length)) throw titles.reason;
+  const taxonomyResult = taxonomy.status === 'fulfilled' ? { ...taxonomy.value, warnings: [] }
+    : { media: [], genres: [], tags: [], warnings: [{ provider: 'anilist', message: 'Genre and tag matches are temporarily unavailable.' }] };
+  if (titles.status === 'rejected') taxonomyResult.warnings.push({ provider: 'anilist', message: 'Title matches are temporarily unavailable.' });
+  const connections = await waitForSearchConnections(connectionsPromise);
+  const data = { data: { ...(titles.status === 'fulfilled' ? titles.value.data : {}), ...connections.data.data } };
+  taxonomyResult.warnings.push(...connections.warnings);
+  const media = [...new Map([...(data.data?.mediaPage?.media ?? [])]
+    .map(item => [`${item.type}:${item.id}`, item])).values()];
   const characters = (data.data?.characterPage?.characters ?? []).flatMap((character) =>
     (character?.media?.nodes ?? [])
       .filter(
@@ -288,6 +314,9 @@ async function searchMedia(search, options = {}) {
     manga: media.filter((item) => item?.type === 'MANGA'),
     characters,
     studios,
+    warnings: taxonomyResult.warnings,
+    genres: taxonomyResult.genres,
+    tags: taxonomyResult.tags,
   };
 }
 
@@ -645,16 +674,51 @@ async function getDiscoverMedia(options = {}) {
   };
 }
 
+async function getDiscoverGenres(hideAdultContent = true) {
+  const taxonomy = await getSearchTaxonomy(anilistRequestWithRetry);
+  if (!Array.isArray(taxonomy.GenreCollection) || !taxonomy.GenreCollection.length) throw new Error('Genre list is unavailable.');
+  return [...new Set(taxonomy.GenreCollection.filter(name => typeof name === 'string' && name.trim() && (hideAdultContent === false || name !== 'Hentai')))].sort((a, b) => a.localeCompare(b));
+}
+
+async function getDiscoverTags(hideAdultContent = true) {
+  const taxonomy = await getSearchTaxonomy(anilistRequestWithRetry);
+  if (!Array.isArray(taxonomy.MediaTagCollection)) throw new Error('Tag list is unavailable.');
+  return [...new Set(taxonomy.MediaTagCollection.filter(tag => typeof tag.name === 'string' && (hideAdultContent === false || !tag.isAdult)).map(tag => tag.name))].sort((a,b)=>a.localeCompare(b));
+}
+
+const filteredBrowse = createFilteredBrowsePager(async (streams, type, safe) => {
+  const declarations = ['$type: MediaType', '$safe: Boolean'];
+  const variables = {type, safe:safe ? false : undefined};
+  const clauses = streams.map((stream,index) => {
+    const fields = {page:'Int',genre:'String',tag:'String',genres:'[String]',tags:'[String]',season:'MediaSeason',seasonYear:'Int',startDate:'String',status:'MediaStatus'};
+    for (const [name,kind] of Object.entries(fields)) { declarations.push('$'+name+index+': '+kind);variables[name+index]=Array.isArray(stream[name]) && !stream[name].length ? undefined : stream[name]; }
+    return 's'+index+': Page(page: $page'+index+', perPage: 50) { pageInfo { hasNextPage } media(type: $type, isAdult: $safe, sort: [POPULARITY_DESC, ID], genre: $genre'+index+', tag: $tag'+index+', genre_in: $genres'+index+', tag_in: $tags'+index+', season: $season'+index+', seasonYear: $seasonYear'+index+', startDate_like: $startDate'+index+', status: $status'+index+') { id type isAdult popularity status genres tags { name } startDate { year } title { romaji english native userPreferred } coverImage { large } episodes chapters volumes format season seasonYear averageScore meanScore } }';
+  });
+  const response = await anilistRequestWithRetry('query ('+declarations.join(', ')+') { '+clauses.join(' ')+' }', variables);
+  return streams.map((_,index)=>response.data['s'+index]);
+});
+
 async function getDiscoverShelfAnime(options = {}) {
   const hideAdultContent = options.hideAdultContent !== false;
   const mediaType = options.mediaType === 'MANGA' ? 'MANGA' : 'ANIME';
-  const definition = getDiscoverShelfDefinition(options.shelfId, mediaType);
+  if (typeof options.shelfId === 'string' && options.shelfId.startsWith('browse-filter-')) {
+    if (options.shelfId.length > 20000) throw new Error('Browse selection is too large.');
+    const raw = JSON.parse(Buffer.from(options.shelfId.slice(14), 'base64url').toString('utf8'));
+    const [genres,tags] = await Promise.all([getDiscoverGenres(hideAdultContent),getDiscoverTags(hideAdultContent)]);
+    const filters = normalizeFilters(raw,genres,tags,mediaType);
+    const result = await filteredBrowse(filters,mediaType,hideAdultContent,clampInteger(options.page,1,100,1),clampInteger(options.perPage,1,20,20));
+    return {id:options.shelfId,title:'Browse '+(mediaType === 'MANGA' ? 'Manga' : 'Anime'),description:'Titles matching your selected filters.',
+      pills:[filters.genres.length ? filters.genres.length+' genres ('+filters.genreMode+')' : 'All genres', filters.tags.length ? filters.tags.length+' tags ('+filters.tagMode+')' : 'All tags', filters.years.length?filters.years.join(', '):'All years', ...(filters.season !== 'any'?[formatSeasonLabel(filters.season.toUpperCase())]:[]), ...(mediaType === 'MANGA' ? [({any:'All statuses',RELEASING:'Publishing',FINISHED:'Finished publishing',NOT_YET_RELEASED:'Not yet published',HIATUS:'On hiatus',CANCELLED:'Cancelled'})[filters.status]] : [])],...result};
+  }
+  const needsGenres = typeof options.shelfId === 'string' && /^genres?-/.test(options.shelfId);
+  const genreNames = needsGenres ? await getDiscoverGenres(hideAdultContent) : [];
+  const definition = getDiscoverShelfDefinition(options.shelfId, mediaType, genreNames);
   const page = clampInteger(options.page, 1, 500, 1);
   const perPage = clampInteger(options.perPage, 1, 20, 20);
   const maxItems = definition.expandedLimit ?? Number.POSITIVE_INFINITY;
   const maxPage = Number.isFinite(maxItems) ? Math.ceil(maxItems / perPage) : 500;
   const safePage = Math.min(page, maxPage);
-  const data = await fetchDiscoverShelfPage(definition, {
+  const data = await (definition.years?.length > 1 ? fetchDiscoverYearsPage : fetchDiscoverShelfPage)(definition, {
     page: safePage,
     perPage,
     hideAdultContent,
@@ -695,6 +759,8 @@ async function getDiscoverShelfAnime(options = {}) {
 }
 
 async function getReleaseCalendar(options = {}) {
+  const requestedPage = options.page ?? undefined;
+  if (requestedPage !== undefined && (!Number.isInteger(requestedPage) || requestedPage < 1 || requestedPage > 5)) throw new Error('Invalid calendar page.');
   const hideAdultContent = options.hideAdultContent !== false;
   const mediaType = options.mediaType === 'MANGA' ? 'MANGA' : 'ANIME';
   const start = clampInteger(options.start, 1, 4102444800, Math.floor(Date.now() / 1000));
@@ -718,10 +784,11 @@ async function getReleaseCalendar(options = {}) {
       }
     `;
     const items = [];
-    for (let page = 1; page <= 5; page += 1) {
+    for (let page = requestedPage ?? 1; page <= (requestedPage ?? 5); page += 1) {
       const data = await anilistRequestWithRetry(query, { page, from: start, to: end });
       const schedules = data.data?.Page?.airingSchedules ?? [];
       items.push(...schedules.filter(item => !hideAdultContent || item.media?.isAdult !== true));
+      if (requestedPage !== undefined) return { mediaType, start, end, precision: 'time', items, hasNextPage: Boolean(data.data?.Page?.pageInfo?.hasNextPage) && page < 5 };
       if (!data.data?.Page?.pageInfo?.hasNextPage) break;
     }
     return { mediaType, start, end, precision: 'time', items };
@@ -764,6 +831,7 @@ async function fetchDiscoverShelfPage(definition, { page, perPage, hideAdultCont
       $mediaType: MediaType,
       $status: MediaStatus,
       $genre: String,
+      $genres: [String],
       $format: MediaFormat
     ) {
       Page(page: $page, perPage: $perPage) {
@@ -781,6 +849,7 @@ async function fetchDiscoverShelfPage(definition, { page, perPage, hideAdultCont
           seasonYear: $seasonYear,
           sort: $sort,
           genre: $genre,
+          genre_in: $genres,
           format: $format,
           isAdult: $isAdult
         ) {
@@ -821,6 +890,7 @@ async function fetchDiscoverShelfPage(definition, { page, perPage, hideAdultCont
       mediaType,
       status: definition.status,
       genre: definition.genre,
+      genres: definition.genres,
       format: definition.format,
     },
     null,
@@ -828,19 +898,65 @@ async function fetchDiscoverShelfPage(definition, { page, perPage, hideAdultCont
   );
 }
 
-function getDiscoverShelfDefinition(shelfId, mediaType = 'ANIME') {
+async function fetchDiscoverYearsPage(definition, options) {
+  // Each year's top N contains every candidate for the combined top N.
+  // Merge before slicing so pagination stays globally ordered by popularity.
+  const needed = options.page * options.perPage;
+  const candidates = new Map();
+  let hasMore = false;
+  for (const year of definition.years) {
+    for (let page = 1; page <= Math.ceil(needed / 50); page += 1) {
+      const result = await fetchDiscoverShelfPage({ ...definition, seasonYear: year }, { ...options, page, perPage: 50 });
+      for (const item of result.data.Page.media) candidates.set(item.id, item);
+      if (!result.data.Page.pageInfo.hasNextPage) break;
+      if (page === Math.ceil(needed / 50)) hasMore = true;
+    }
+  }
+  const items = [...candidates.values()].sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0) || a.id - b.id);
+  const hasNextPage = hasMore || items.length > needed;
+  return { data: { Page: {
+    media: items.slice(needed - options.perPage, needed),
+    pageInfo: { hasNextPage, lastPage: hasNextPage ? options.page + 1 : options.page, total: hasMore ? null : items.length },
+  } } };
+}
+
+function getDiscoverShelfDefinition(shelfId, mediaType = 'ANIME', genreNames = []) {
   const { currentSeason, currentYear, nextSeason, nextYear } = getSeasonWindows();
-  const genreDefinitions = {
-    'genre-action': 'Action',
-    'genre-adventure': 'Adventure',
-    'genre-comedy': 'Comedy',
-    'genre-drama': 'Drama',
-    'genre-fantasy': 'Fantasy',
-    'genre-mystery': 'Mystery',
-    'genre-romance': 'Romance',
-    'genre-sci-fi': 'Sci-Fi',
-    'genre-slice-of-life': 'Slice of Life',
-  };
+  const periodMatch = typeof shelfId === 'string'
+    ? shelfId.match(/^browse-period-(any|\d{4}(?:-\d{4})*)-(any|winter|spring|summer|fall)$/)
+    : null;
+  if (periodMatch && mediaType === 'ANIME') {
+    const years = periodMatch[1] === 'any' ? [] : [...new Set(periodMatch[1].split('-').map(Number))].sort((a, b) => b - a);
+    if (years.some(year => year < 1900 || year > currentYear + 5)) {
+      throw new Error('Invalid discovery year.');
+    }
+    const season = periodMatch[2] === 'any' ? undefined : periodMatch[2].toUpperCase();
+    const period = [season ? formatSeasonLabel(season) : null, years.length ? years.join(', ') : null].filter(Boolean);
+    return {
+      id: shelfId,
+      title: period.length ? `${period.join(' ')} Anime` : 'Anime by Release',
+      description: `Popular anime ${period.length ? `released in ${period.join(' ')}` : 'from across all years and seasons'}.`,
+      pills: [...period, 'Popularity'],
+      season,
+      seasonYear: years.length === 1 ? years[0] : undefined,
+      years,
+      sort: ['POPULARITY_DESC'],
+    };
+  }
+  const genreDefinitions = Object.fromEntries(genreNames.map(name => ['genre-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''), name]));
+  if (typeof shelfId === 'string' && shelfId.startsWith('genres-')) {
+    const slugs = shelfId.slice(7).split('--');
+    const genres = [...new Set(slugs.map(slug => genreDefinitions[`genre-${slug}`]))];
+    if (genres.length < 2 || genres.length > genreNames.length || genres.some(genre => !genre)) throw new Error('Invalid genre selection.');
+    return {
+      id: shelfId,
+      title: `${genres.join(' + ')} ${mediaType === 'MANGA' ? 'Manga' : 'Anime'}`,
+      description: 'Popular titles matching all selected genres.',
+      pills: [...genres, 'Popularity'],
+      genres,
+      sort: ['POPULARITY_DESC'],
+    };
+  }
   const genre = genreDefinitions[shelfId];
   if (genre) {
     return {
@@ -852,6 +968,8 @@ function getDiscoverShelfDefinition(shelfId, mediaType = 'ANIME') {
       sort: ['POPULARITY_DESC'],
     };
   }
+
+  if (typeof shelfId === 'string' && shelfId.startsWith('genre-')) throw new Error('Genre is unavailable for the current content filter.');
 
   const browseDefinitions = {
     'browse-complete': {
@@ -1324,6 +1442,7 @@ async function getAnimeDetails(id, options = {}) {
             rating
             mediaRecommendation {
               id
+              type
               title { romaji english native userPreferred }
               coverImage { large }
               description
@@ -1842,6 +1961,8 @@ module.exports = {
   searchMangaBatch,
   getDiscoverMedia,
   getDiscoverShelfAnime,
+  getDiscoverGenres,
+  getDiscoverTags,
   getReleaseCalendar,
   getUserAnimeCollection,
   getUserMangaCollection,

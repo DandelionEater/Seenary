@@ -142,7 +142,7 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
   }
   async function savedSearch(text, hideAdultContent) {
     const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const filter = { $or: ['title_preferred', 'title_english', 'title_romaji', 'title_native'].map(key => ({ [`metadata.${key}`]: { $regex: escaped, $options: 'i' } })),
+    const filter = { $or: ['title_preferred', 'title_english', 'title_romaji', 'title_native', 'genres'].map(key => ({ [`metadata.${key}`]: { $regex: escaped, $options: 'i' } })).concat([{ 'sources.anilist.details.tags.name': { $regex: escaped, $options: 'i' } }]),
       ...(hideAdultContent ? { 'metadata.is_adult': { $in: [false, 0] } } : {}) };
     const documents = await repo.media.find(filter).sort({ _id: 1 }).limit(40).toArray();
     return { anime: documents.filter(item => item.type === 'ANIME').map(item => toMedia(item, { stale: true })),
@@ -151,6 +151,19 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
   }
   return {
     ingest,
+    async savedRecommendationCards(type, ids, hideAdult = true) {
+      if (!['ANIME', 'MANGA'].includes(type) || !Array.isArray(ids) || ids.length > 24 || !ids.every(id => Number.isSafeInteger(id) && id !== 0)) throw new Error('Invalid recommendation identities.');
+      if (!ids.length) return [];
+      const documents = await repo.media.find({ type, $or: [
+        { anilistId: { $in: ids.filter(id => id > 0) } },
+        { malId: { $in: ids.filter(id => id < 0).map(id => -id) } },
+      ], ...(hideAdult ? { 'metadata.is_adult': { $in: [false, 0] } } : {}) }).toArray();
+      return documents.map(document => {
+        const card = toMedia(document, { stale: false });
+        const requestedId = ids.includes(document.anilistId) ? document.anilistId : -document.malId;
+        return { id: requestedId, type, title: card.title, coverImage: card.coverImage, format: card.format, averageScore: card.averageScore };
+      }).filter(card => card.title && Object.values(card.title).some(value => typeof value === 'string' && value.trim()));
+    },
     async franchiseStartDate(id) {
       if (!validId(id)) throw new Error('Invalid Anime identity.');
       const saved = await savedSeriesDate(id);
@@ -255,6 +268,13 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
       }
     },
     async query(method, args) {
+      if (method === 'getDiscoverGenres' || method === 'getDiscoverTags') {
+        const safe = args[0] !== false;
+        const result = await fetchCached(method + ':' + safe, () => method === 'getDiscoverTags' ? provider.tags(safe) : provider.genres(safe), DAY, payload => {
+          if (!Array.isArray(payload) || !payload.length || !payload.every(name => typeof name === 'string')) throw new Error('Invalid genre list.');
+        });
+        return result.payload;
+      }
       if (method === 'getMediaPeople') {
         const [type, id, kind, page = 1] = args;
         if (!['ANIME', 'MANGA'].includes(type) || !validId(id) || !['character', 'staff'].includes(kind)
@@ -321,11 +341,11 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
         if (text.length < 2 || text.length > 150) return { anime: [], manga: [], characters: [], studios: [] };
         const hideAdultContent = args[1] !== false;
         try {
-          const result = await fetchCached(JSON.stringify([method, text.toLowerCase(), hideAdultContent]), () => provider.search(text, hideAdultContent), HOUR, (payload, time) => {
+          const result = await fetchCached(JSON.stringify([method, 'taxonomy-v3', text.toLowerCase(), hideAdultContent]), () => provider.search(text, hideAdultContent), payload => payload.warnings?.length ? 15000 : HOUR, (payload, time) => {
             if (!Array.isArray(payload?.anime) || !Array.isArray(payload?.manga)) throw new Error('Invalid search response.');
             return ingestTree(payload, null, time);
-          });
-          return { ...result.payload, ...(result.stale ? { warnings: [{ provider: 'anilist', message: 'Showing a saved search while AniList is unavailable.' }] } : {}) };
+          }, { interactive: true, staleWhileRevalidate: true });
+          return { ...result.payload, ...(result.stale ? { warnings: [...(result.payload.warnings || []), { provider: 'anilist', message: result.refreshing ? 'Showing a saved search while results refresh.' : 'Showing a saved search while AniList is unavailable.' }] } : {}) };
         } catch { return savedSearch(text, hideAdultContent); }
       }
       if (method === 'getDiscoverMedia') {
@@ -366,7 +386,8 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
       }
       if (method === 'getDiscoverShelfAnime') {
         const [shelfId, inputPage = 1, hideAdult = true, type = 'ANIME'] = args;
-        if (typeof shelfId !== 'string' || !/^[a-z0-9-]{1,60}$/.test(shelfId) || !Number.isInteger(inputPage) || inputPage < 1 || inputPage > 100 || !['ANIME', 'MANGA'].includes(type)) throw new Error('Invalid discovery page.');
+        const validShelfId = typeof shelfId === 'string' && (/^[a-z0-9-]{1,160}$/.test(shelfId) || (/^browse-filter-[A-Za-z0-9_-]+$/.test(shelfId) && shelfId.length <= 20000) || (/^browse-period-\d{4}(?:-\d{4})*-(any|winter|spring|summer|fall)$/.test(shelfId) && shelfId.length <= 700));
+        if (!validShelfId || !Number.isInteger(inputPage) || inputPage < 1 || inputPage > 100 || !['ANIME', 'MANGA'].includes(type)) throw new Error('Invalid discovery page.');
         const hideAdultContent = hideAdult !== false;
         try {
           const result = await fetchCached(JSON.stringify([method, shelfId, inputPage, hideAdultContent, type]), () => provider.shelf(shelfId, inputPage, hideAdultContent, type), HOUR, (payload, time) => {
@@ -380,13 +401,14 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
         }
       }
       if (method === 'getReleaseCalendar') {
-        const [inputStart, inputEnd, hideAdult = true, type = 'ANIME'] = args;
+        const [inputStart, inputEnd, hideAdult = true, type = 'ANIME', page] = args;
+        if (page != null && (!Number.isInteger(page) || page < 1 || page > 5)) throw new Error('Invalid calendar page.');
         const start = Number(inputStart);
         const end = Number(inputEnd);
         if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end <= start || end - start > 14 * 86400 || !['ANIME', 'MANGA'].includes(type)) throw new Error('Invalid release calendar window.');
         const hideAdultContent = hideAdult !== false;
         try {
-          const result = await fetchCached(JSON.stringify([method, start, end, hideAdultContent, type]), () => provider.calendar(start, end, hideAdultContent, type), 24 * HOUR, (payload, time) => {
+          const result = await fetchCached(JSON.stringify([method, start, end, hideAdultContent, type, ...(page != null ? [page] : [])]), () => provider.calendar(start, end, hideAdultContent, type, page ?? undefined), 24 * HOUR, (payload, time) => {
             if (!Array.isArray(payload?.items) || payload.items.length > 500) throw new Error('Invalid release calendar response.');
             return ingestTree(payload.items.map(item => item.media), type, time);
           });
