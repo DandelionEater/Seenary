@@ -75,8 +75,16 @@ await client.refresh();
 assert.equal((await client.read()).pending.length, 1, 'refresh preserves pending overlay');
 await client.flush();
 assert.equal((await client.read()).pending[0].error, 'REVISION_CONFLICT');
-await client.resolve((await client.read()).pending[0].request.operationId, 'device');
-await client.flush();
+const rejectedId = (await client.read()).pending[0].request.operationId;
+const retryId = await client.resolve(rejectedId, 'device');
+assert.ok(retryId && retryId !== rejectedId, 'resolution issues a fresh operation ID');
+await client.queue('other-title', { progress: 1 });
+await client.flush(retryId);
+assert.equal(requests.at(-1).operationId, retryId);
+assert.deepEqual((await client.read()).pending.map(item => item.request.mediaId), ['other-title'], 'resolution only uploads the chosen edit');
+const stateAfterRetry = await client.read();
+stateAfterRetry.pending = [];
+await storage.write('alice', stateAfterRetry);
 assert.equal(server.progress, 4);
 assert.equal(server.isFavorite, false, 'rebase applies only intended fields');
 

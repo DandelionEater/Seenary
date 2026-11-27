@@ -46,6 +46,7 @@ async function scenario(repo, client, media) {
   const adapters = { refresh: async () => { throw new Error('unexpected'); }, mapMal: async () => [],
     pull: async (_provider, token, type) => { assert.equal(token, 'al-access'); pullCalls++;
       observedProgress = await repo.providerRefreshStates.findOne({ _id: 'link-al' });
+      if (pullCalls === 1) await repo.providerRefreshStates.updateOne({ _id: 'link-al' }, { $set: { manualRequestedAt: new Date(clock) } });
       return type === 'ANIME' ? alPayload(11) : { lists: [] }; } };
   let inbound = createProviderInbound({ client, repo, media, cipher, adapters, metadata: {
     anilist: async (raw, type) => hydratedAniList.push([raw.id, type]),
@@ -54,6 +55,7 @@ async function scenario(repo, client, media) {
   assert.deepEqual(hydratedAniList, [[11, 'ANIME']], 'AniList pull hydrates public card metadata');
   assert.equal(observedProgress.progress.stage, 'fetching');
   assert.equal((await repo.providerRefreshStates.findOne({ _id: 'link-al' })).progress, undefined);
+  assert.equal((await repo.providerRefreshStates.findOne({ _id: 'link-al' })).manualRequestedAt, undefined, 'a manual request arriving mid-pull is consumed on success');
   let document = await repo.media.findOne({ anilistId: 11 }); let entry = await repo.libraryEntries.findOne({ userId, mediaId: document._id });
   assert.equal(entry.progress, 4); assert.equal(entry.score, 8); assert.equal(entry.isFavorite, false); assert.equal(entry.revision, 1);
   assert.equal(await repo.jobs.countDocuments({}), 0, 'inbound reconciliation must not echo into the outbound queue');
@@ -83,6 +85,79 @@ async function scenario(repo, client, media) {
   result = await inbound.runOnce(1); assert.equal(result.results[0].status, 'succeeded');
   assert.equal(await repoManual.libraryEntries.countDocuments({ userId: manualUser }), 1, 'manual pull runs while automatic sync is disabled');
   assert.equal((await repoManual.providerRefreshStates.findOne({ _id: 'link-manual' })).manualRequestedAt, undefined);
+
+  const repoCancel = localRepo();
+  const cancelUser = await link(repoCancel, 'cancel', 'anilist');
+  const service = createProviderService({ repo: repoCancel, accounts: { getAuthenticatedUser: async token => token ? { _id: token } : null } });
+  await service.requestInboundSync(cancelUser, 'anilist');
+  assert.equal((await service.cancelInboundSync('other-user', 'anilist')).ok, false);
+  assert.equal((await service.cancelInboundSync(cancelUser, 'anilist')).cancelled, true);
+  assert.equal((await service.cancelInboundSync(cancelUser, 'anilist')).cancelled, false);
+  assert.equal((await service.inboundSyncStatus(cancelUser, 'anilist')).sync.lastOutcome, 'cancelled');
+  assert.equal((await service.inboundSyncStatus(cancelUser, 'anilist')).sync.requestedAt, null);
+  await service.requestInboundSync(cancelUser, 'anilist');
+  const cancelMedia = localMedia(repoCancel);
+  const cancelWorker = createProviderInbound({ client: fakeClient, repo: repoCancel, cipher, spacing: { anilist: 0, mal: 0 },
+    media: { ...cancelMedia, ensure: async (type, provider, id) => {
+      if (id === 17) assert.equal((await service.cancelInboundSync(cancelUser, 'anilist')).cancelled, true);
+      return cancelMedia.ensure(type, provider, id);
+    } },
+    adapters: { ...adapters, pull: async (_, __, type) => type === 'ANIME' ? { lists: [...alPayload(16).lists, ...alPayload(17).lists] } : { lists: [] } },
+  });
+  assert.equal((await cancelWorker.runOnce(1)).results[0].status, 'skipped');
+  assert.equal(await repoCancel.libraryEntries.countDocuments({ userId: cancelUser }), 1, 'cancellation preserves committed changes and fences later writes');
+  const stopped = (await service.inboundSyncStatus(cancelUser, 'anilist')).sync;
+  assert.equal(stopped.running, false);
+  assert.equal(stopped.lastOutcome, 'cancelled');
+
+  const repoRetry = localRepo();
+  const retryUser = await link(repoRetry, 'retry', 'anilist');
+  await repoRetry.accountSettings.updateOne({ _id: retryUser }, { $set: { autoSyncEnabled: false } });
+  await repoRetry.providerRefreshStates.insertOne({ _id: 'link-retry', userId: retryUser, provider: 'anilist',
+    linkRevision: 1, revision: 0, nextAttemptAt: new Date(clock), manualRequestedAt: new Date(clock), attempts: 144 });
+  let retryCalls = 0;
+  let retryClock = clock;
+  const retryWorker = createProviderInbound({ client: fakeClient, repo: repoRetry, cipher, now: () => retryClock,
+    spacing: { anilist: 0, mal: 0 }, adapters: { pull: async () => {
+      retryCalls++;
+      throw Object.assign(new Error('Unavailable'), { status: 503 });
+    } } });
+  assert.equal((await retryWorker.runOnce(1)).results[0].status, 'failed');
+  const exhausted = await repoRetry.providerRefreshStates.findOne({ _id: 'link-retry' });
+  assert.equal(exhausted.manualRequestedAt, undefined);
+  assert.equal(exhausted.lastOutcome, 'failed');
+  const retryService = createProviderService({ repo: repoRetry, accounts: { getAuthenticatedUser: async () => ({ _id: retryUser }) } });
+  const restarted = await retryService.requestInboundSync(retryUser, 'anilist');
+  assert.equal(restarted.ok, true);
+  retryClock = +restarted.requestedAt;
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    assert.equal((await retryWorker.runOnce(1)).results[0].status, attempt === 6 ? 'failed' : 'retry');
+    const state = await repoRetry.providerRefreshStates.findOne({ _id: 'link-retry' });
+    assert.equal(state.attempts, attempt);
+    assert.equal(Boolean(state.manualRequestedAt), attempt < 6);
+    retryClock = +state.nextAttemptAt;
+  }
+  assert.equal((await retryWorker.runOnce(1)).results[0].status, 'skipped');
+  assert.equal(retryCalls, 7);
+
+  const repoLease = localRepo();
+  await link(repoLease, 'first', 'anilist');
+  await link(repoLease, 'second', 'anilist');
+  let leaseClock = clock;
+  const leaseWorker = createProviderInbound({ client: fakeClient, repo: repoLease, cipher, now: () => leaseClock,
+    spacing: { anilist: 0, mal: 0 }, adapters: { pull: async (_provider, token, type, _id, checkActive) => {
+      if (token === 'first-access' && type === 'ANIME') {
+        const second = await repoLease.providerRefreshStates.findOne({ _id: 'link-second' });
+        assert.equal(second.leaseUntil, undefined);
+        leaseClock += 4 * 60000;
+        await checkActive();
+        leaseClock += 2 * 60000;
+        const first = await repoLease.providerRefreshStates.findOne({ _id: 'link-first' });
+        assert.ok(+first.leaseUntil > leaseClock);
+      }
+      return { lists: [] };
+    } } });
+  assert.deepEqual((await leaseWorker.runOnce(2)).results.map(row => row.status), ['succeeded', 'succeeded']);
 
   const repoRace = localRepo(); const raceUser = await link(repoRace, 'race', 'anilist'); const raceMedia = localMedia(repoRace);
   document = await raceMedia.ensure('ANIME', 'anilist', 12);

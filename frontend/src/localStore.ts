@@ -1,4 +1,5 @@
 import { normalizeReminderGroups } from './utils/releaseReminderSettings';
+import { readTitleLanguage, saveTitleLanguage } from './utils/titlePreference';
 import type {
   AnimeMedia,
   AppSettings,
@@ -939,17 +940,19 @@ export const localStore = {
 
   async getSettings(userId: number) {
     const state = await readState(userId);
-    return normalizeSettings(state.settings);
+    return { ...normalizeSettings(state.settings), titleLanguage: readTitleLanguage(state.settings?.titleLanguage) };
   },
 
   async updateSettings(userId: number, settings: Partial<LocalSettings>) {
     const state = await readState(userId);
+    const legacyTitleLanguage = state.settings?.titleLanguage;
     state.settings = normalizeSettings({
       ...(state.settings ?? {}),
       ...settings,
     });
     await writeState(userId, state);
-    return state.settings;
+    saveTitleLanguage(settings.titleLanguage);
+    return { ...state.settings, titleLanguage: readTitleLanguage(legacyTitleLanguage) };
   },
 
   async getAutoSyncEnabled(userId: number) {
@@ -1997,7 +2000,7 @@ export const localStore = {
       exportedAt: new Date().toISOString(),
       username,
       data: {
-        settings: state.settings,
+        settings: { ...normalizeSettings(state.settings), titleLanguage: readTitleLanguage(state.settings?.titleLanguage) },
         anime: state.anime,
         entries: state.entries,
         manga: state.manga,
@@ -2110,6 +2113,7 @@ export const localStore = {
     await writeState(userId, state);
 
     const imported = animeImported + mangaImported;
+    if (isPlainRecord(backup.data.settings)) saveTitleLanguage(backup.data.settings.titleLanguage);
     const skipped = animeEntries.skipped + mangaEntries.skipped;
     const importSummary = [
       animeImported ? `${animeImported} Anime` : "",
@@ -2137,7 +2141,7 @@ export const localStore = {
       animeImported,
       mangaImported,
       skipped,
-      settings: normalizeSettings(state.settings),
+      settings: { ...normalizeSettings(state.settings), titleLanguage: readTitleLanguage(state.settings?.titleLanguage) },
       portablePreferences: backup.data.portablePreferences,
       desktopPreferences: backup.data.desktopPreferences,
       backupVersion,

@@ -2,7 +2,7 @@ require('./env');
 const path = require('node:path');
 const { fork } = require('node:child_process');
 const { connectProduction, reportError } = require('./atlas/connection');
-const { validateDeployment, healthReport } = require('./atlas/operations');
+const { validateDeployment, healthReport, productionWebOrigins } = require('./atlas/operations');
 const { createAtlasApplication } = require('./atlas/application');
 const { createStagingServer } = require('./atlas/stagingServer');
 const { createAnalyticsReportHandler } = require('./atlas/analyticsReports');
@@ -15,7 +15,7 @@ async function main() {
     const initialHealth = await healthReport(connection.db);
     if (!initialHealth.ok) throw new Error('Atlas health gate failed.');
     const app = await createAtlasApplication(connection);
-    const origins = process.env.WEB_ORIGINS.split(',').map(value => value.trim()).filter(Boolean);
+    const origins = productionWebOrigins(process.env);
     server = createStagingServer(app.accounts, app.providers, app.media, app.library, app.metadata, app.analytics, {
       loopbackOnly: false, secureCookies: true, cookieName: 'seenary_sid', allowedOrigins: origins,
       trustProxy: process.env.TRUST_PROXY === 'true', requestLimit: Number(process.env.RPC_RATE_LIMIT_MAX || 300),

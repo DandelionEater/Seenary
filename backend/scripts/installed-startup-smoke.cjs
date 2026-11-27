@@ -20,7 +20,30 @@ function run(file, args) {
   if (result.error) throw result.error;
   assert.ok([0, 3010].includes(result.status), `${path.basename(file)} exited ${result.status}: ${result.stderr}`);
 }
-function install(file) { assert.ok(fs.existsSync(file), `Missing installer: ${file}`); run(file, ['/S', '/currentuser', '/D=' + destination]); }
+function install(file, args = []) {
+  assert.ok(fs.existsSync(file), `Missing installer: ${file}`);
+  run(file, ['/S', '/currentuser', ...args, '/D=' + destination]);
+}
+async function verifyUpdaterRelaunch() {
+  const executable = path.join(destination, 'Seenary.exe');
+  const deadline = Date.now() + 30000;
+  const command = "Get-Process -Name Seenary -ErrorAction SilentlyContinue | ForEach-Object { if ($_.Path -eq $env:SEENARY_CI_EXECUTABLE -and $_.MainWindowHandle -ne 0) { $_.Id } }";
+  while (Date.now() < deadline) {
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+      env: { ...env, SEENARY_CI_EXECUTABLE: executable }, windowsHide: true, encoding: 'utf8', timeout: 5000,
+    });
+    if (result.error) throw result.error;
+    const pid = Number(result.stdout.trim());
+    if (Number.isSafeInteger(pid) && pid > 0) {
+      run('taskkill', ['/PID', String(pid), '/T', '/F']);
+      console.log('PASS: upgrade installer relaunched the installed Seenary window.');
+      fs.writeFileSync(path.join(root, 'updater-relaunch.json'), JSON.stringify({ relaunched: true }));
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  throw new Error('The upgrade installer did not relaunch an installed Seenary window within 30 seconds.');
+}
 async function freePort() {
   const server = net.createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -87,7 +110,8 @@ async function launch(label) {
   install(previous);
   const sentinel = path.join(profile, 'upgrade-preservation.txt');
   fs.writeFileSync(sentinel, 'preserve this profile');
-  install(installer);
+  install(installer, ['--updated', '--force-run']);
+  await verifyUpdaterRelaunch();
   assert.equal(fs.readFileSync(sentinel, 'utf8'), 'preserve this profile');
   await launch('upgrade-install');
 })().catch(error => {

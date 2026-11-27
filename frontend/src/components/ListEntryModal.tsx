@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowPathIcon,
   CalendarDaysIcon,
@@ -10,6 +10,7 @@ import {
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { HeartIcon as HeartIconSolid } from "@heroicons/react/24/solid";
+import type { Entry } from "../cloud/libraryClient";
 import type { EditableListEntry, MediaType } from "../types/domain";
 import { getListStatusLabel, LIST_STATUS_ORDER } from "../utils/mediaFormatting";
 import { Tooltip } from "./ui/Tooltip";
@@ -20,6 +21,7 @@ type EditableMediaListEntry = EditableListEntry & {
   is_rereading?: number | boolean;
   cloud_pending?: boolean;
   cloud_conflict?: string | null;
+  cloud_current?: Entry | null;
   cloud_action?: "upsert" | "delete" | null;
 };
 
@@ -115,10 +117,21 @@ export function ListEntryModal({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [resolvingConflict, setResolvingConflict] = useState(false);
+  const [review, setReview] = useState<EditableMediaListEntry | null>();
+  const displayedEntry = review === undefined ? entry : review;
+  const conflict = displayedEntry?.cloud_conflict ? displayedEntry : null;
+  const conflictPanel = useRef<HTMLElement>(null);
+  const hasConflict = Boolean(conflict);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (isOpen && hasConflict) conflictPanel.current?.scrollIntoView({ block: "nearest" });
+  }, [isOpen, hasConflict]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      setReview(undefined);
+      return;
+    }
     updateModalOpenClass(1);
 
     return () => updateModalOpenClass(-1);
@@ -224,6 +237,7 @@ export function ListEntryModal({
         : await window.api.saveMyListEntry(animeId, data);
 
       if (!result.ok || !result.entry) {
+        if (!result.ok && result.entry) setReview(result.entry);
         setMessage(result.message);
         return;
       }
@@ -251,6 +265,7 @@ export function ListEntryModal({
         : await window.api.removeMyListEntry(animeId);
 
       if (!result.ok) {
+        if (result.entry) setReview(result.entry);
         setMessage(result.message);
         return;
       }
@@ -273,7 +288,17 @@ export function ListEntryModal({
       const result = isManga
         ? await window.api.resolveMyMangaListConflict(animeId, choice)
         : await window.api.resolveMyListConflict(animeId, choice);
-      if (!result.ok) { setMessage(result.message); return; }
+      if (!result.ok) {
+        if (result.entry) setReview(result.entry);
+        setMessage(result.message);
+        return;
+      }
+      const resolved: EditableMediaListEntry | null | undefined = result.entry;
+      if (review && resolved) {
+        setReview(resolved);
+        setMessage(resolved.cloud_pending ? result.message : `${result.message} Review your current changes, then save again.`);
+        return;
+      }
       if (result.entry) onSaved(result.entry, result.message);
       else onRemoved(result.message);
       onClose();
@@ -368,17 +393,29 @@ export function ListEntryModal({
         </div>
 
         <div className="scroll-container -mr-4 flex min-h-0 flex-1 flex-col space-y-4 overflow-x-hidden overflow-y-auto pr-4">
-          {entry?.cloud_conflict && (
-            <section className="rounded-2xl border border-amber-300/25 bg-amber-300/10 p-4" role="alert">
-              <p className="font-semibold text-amber-50">This title changed on another device</p>
-              <p className="mt-2 text-sm leading-6 text-amber-50/70">Review the values below, then keep the current cloud version or apply this device’s queued edit to the latest revision.</p>
+          {conflict && (
+            <section ref={conflictPanel} className="rounded-2xl border border-amber-300/25 bg-amber-300/10 p-4" role="alert">
+              <p className="font-semibold text-amber-50">An earlier Atlas edit needs review</p>
+              <p className="mt-2 text-sm leading-6 text-amber-50/70">Choose which version to keep for this title.</p>
+              <dl className="mt-3 grid gap-2 text-sm text-amber-50/85 sm:grid-cols-2">
+                <div>
+                  <dt className="font-semibold">Queued edit</dt>
+                  <dd>{conflict.cloud_action === "delete" ? "Remove this title" : `${getListStatusLabel(conflict.status, mediaType)} · Progress ${conflict.progress ?? 0} · Score ${conflict.score ?? "Unrated"}`}</dd>
+                </div>
+                <div>
+                  <dt className="font-semibold">Cloud version</dt>
+                  <dd>{conflict.cloud_current === undefined ? "Current values unavailable"
+                    : !conflict.cloud_current || conflict.cloud_current.deleted ? "Title is absent from the cloud list"
+                    : `${getListStatusLabel(conflict.cloud_current.status, mediaType)} · Progress ${conflict.cloud_current.progress} · Score ${conflict.cloud_current.score ?? "Unrated"}`}</dd>
+                </div>
+              </dl>
               <div className="mt-4 flex flex-wrap gap-2">
-                <button type="button" disabled={resolvingConflict} onClick={() => void resolveConflict("cloud")} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white">Keep cloud version</button>
-                <button type="button" disabled={resolvingConflict} onClick={() => void resolveConflict("device")} className="rounded-xl bg-amber-100 px-4 py-2 text-sm font-semibold text-black">Apply my edit</button>
+                <button type="button" disabled={busy || resolvingConflict} onClick={() => void resolveConflict("cloud")} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white">Keep cloud version</button>
+                <button type="button" disabled={busy || resolvingConflict} onClick={() => void resolveConflict("device")} className="rounded-xl bg-amber-100 px-4 py-2 text-sm font-semibold text-black">{conflict.cloud_action === "delete" ? "Apply queued removal" : "Apply queued edit"}</button>
               </div>
             </section>
           )}
-          {entry?.cloud_pending && !entry.cloud_conflict && (
+          {displayedEntry?.cloud_pending && !conflict && (
             <p className="rounded-2xl border border-sky-300/20 bg-sky-300/10 px-4 py-3 text-sm text-sky-50/80" role="status">Saved on this device and waiting for Atlas acknowledgement.</p>
           )}
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -663,7 +700,7 @@ export function ListEntryModal({
         </div>
 
         {message && (
-          <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/75">
+          <div role="status" className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/75">
             {message}
           </div>
         )}
@@ -672,7 +709,7 @@ export function ListEntryModal({
           <button
             type="button"
             onClick={handleRemove}
-            disabled={busy || resolvingConflict || Boolean(entry?.cloud_conflict)}
+            disabled={busy || resolvingConflict || Boolean(conflict)}
             className="flex items-center justify-center gap-2 rounded-2xl border border-red-400/15 bg-red-500/10 px-4 py-3 text-sm text-red-200 transition hover:bg-red-500/15 disabled:opacity-50"
           >
             <TrashIcon className="h-4 w-4" />
@@ -692,7 +729,7 @@ export function ListEntryModal({
             <button
               type="button"
               onClick={handleSave}
-              disabled={busy || resolvingConflict || Boolean(entry?.cloud_conflict)}
+              disabled={busy || resolvingConflict || Boolean(conflict)}
               className="inline-flex flex-1 items-center justify-center gap-2 rounded-2xl bg-[var(--app-accent)] px-5 py-3 text-sm font-semibold text-black shadow-lg shadow-[var(--app-accent)]/15 transition hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 sm:flex-none"
             >
               <CheckCircleIcon className="h-4 w-4" />

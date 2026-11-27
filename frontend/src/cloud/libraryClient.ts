@@ -76,10 +76,10 @@ export class LibraryClient {
     await this.storage.write(this.userId, state); // An edit is accepted only after durable storage succeeds.
     return state;
   }
-  async flush() {
+  async flush(operationId?: string) {
     const state = await this.read();
     for (const pending of [...state.pending]) {
-      if (pending.error) continue;
+      if (pending.error || (operationId && pending.request.operationId !== operationId)) continue;
       // Network failures leave the exact request intact, including its operation ID.
       const reply = await this.rpc('mutateLibraryEntry', [pending.request], this.userId);
       if (reply.code === 'UNAUTHENTICATED' || reply.code === 'ACCOUNT_CHANGED') throw new Error(reply.code);
@@ -100,7 +100,8 @@ export class LibraryClient {
     const pending = state.pending.find(item => item.request.operationId === operationId);
     if (!pending) return;
     const reply = checked(await this.rpc('getLibraryEntry', [pending.request.mediaId], this.userId));
-    if (choice === 'device' && (reply.entry?.revision ?? 0) !== (pending.current?.revision ?? state.entries[pending.request.mediaId]?.revision ?? 0)) {
+    const reviewed = pending.current === undefined ? state.entries[pending.request.mediaId] : pending.current;
+    if (choice === 'device' && (reply.entry?.revision ?? 0) !== (reviewed?.revision ?? 0)) {
       pending.current = reply.entry;
       await this.storage.write(this.userId, state);
       throw new Error('The cloud entry changed again. Review its latest values before applying your edit.');
@@ -108,9 +109,11 @@ export class LibraryClient {
     if (reply.entry) state.entries[pending.request.mediaId] = reply.entry;
     else delete state.entries[pending.request.mediaId];
     state.pending = state.pending.filter(item => item !== pending);
-    if (choice === 'device') state.pending.push({ request: { ...pending.request, operationId: crypto.randomUUID(), expectedRevision: reply.entry?.revision ?? 0,
+    const retryId = choice === 'device' ? crypto.randomUUID() : undefined;
+    if (retryId) state.pending.push({ queuedAt: new Date().toISOString(), request: { ...pending.request, operationId: retryId, expectedRevision: reply.entry?.revision ?? 0,
       ...(pending.request.action === 'upsert' && reply.entry?.deleted ? { restore: true } : {}) } });
     await this.storage.write(this.userId, state);
+    return retryId;
   }
   async stageImport(source: unknown) {
     const state = await this.read();

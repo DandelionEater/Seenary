@@ -3,6 +3,42 @@ const assert = require('node:assert/strict');
 const { createProviderService } = require('../atlas/providers');
 const { createProviderInbound } = require('../atlas/providerInbound');
 
+test('MyAnimeList pagination stops on cycles, endless empty pages, and cancellation', async () => {
+  const fetchPath = require.resolve('node-fetch');
+  const malPath = require.resolve('../mal');
+  const originalFetch = require(fetchPath);
+  const originalMal = require.cache[malPath];
+  let calls = 0;
+  let repeat = true;
+  let mal;
+  try {
+    require.cache[fetchPath].exports = async () => {
+      calls++;
+      return { ok: true, status: 200, json: async () => ({
+        data: [], paging: { next: `https://api.myanimelist.net/v2/users/@me/animelist?offset=${repeat ? 100 : calls * 100}` },
+      }) };
+    };
+    delete require.cache[malPath];
+    mal = require(malPath);
+  } finally {
+    require.cache[fetchPath].exports = originalFetch;
+    if (originalMal) require.cache[malPath] = originalMal;
+    else delete require.cache[malPath];
+  }
+
+  await assert.rejects(mal.getViewerAnimeList('token'), { code: 'MAL_PAGINATION_LIMIT' });
+  assert.equal(calls, 2);
+  calls = 0;
+  repeat = false;
+  await assert.rejects(mal.getViewerMangaList('token'), { code: 'MAL_PAGINATION_LIMIT' });
+  assert.equal(calls, 1000);
+  calls = 0;
+  await assert.rejects(mal.getViewerAnimeList('token', { checkActive: async () => {
+    if (calls > 0) throw Object.assign(new Error('Pull cancelled'), { code: 'PULL_CANCELLED' });
+  } }), { code: 'PULL_CANCELLED' });
+  assert.equal(calls, 1);
+});
+
 function fixture(state) {
   return createProviderService({
     accounts: { getAuthenticatedUser: async token => token ? { _id: token } : null },
@@ -54,6 +90,51 @@ test('pull status defaults missing diagnostics and rejects unsafe error strings'
   assert.equal((await service.inboundSyncStatus('alice', 'anilist')).sync.lastErrorStatus, null);
 });
 
+test('a successful pull with a leftover request is idle and can be started again', async () => {
+  const state = { lastOutcome: 'success', lastSuccessAt: new Date(Date.now() - 1000),
+    manualRequestedAt: new Date(Date.now() - 5000), progress: { stage: 'starting' } };
+  const status = (await fixture(state).inboundSyncStatus('alice', 'anilist')).sync;
+  assert.equal(status.requestedAt, null);
+  assert.equal(status.progress, null);
+  state.manualRequestedAt = new Date();
+  assert.equal((await fixture(state).inboundSyncStatus('alice', 'anilist')).sync.requestedAt, state.manualRequestedAt);
+});
+
+test('an empty MyAnimeList account completes its first pull within the shared request budget', async () => {
+  let clock = 10000;
+  let budget;
+  let completion;
+  const calls = [];
+  const state = { _id: 'link', userId: 'alice', provider: 'mal', manualRequestedAt: new Date(clock) };
+  const link = { _id: 'link', userId: 'alice', provider: 'mal', revision: 1, accessToken: 'encrypted' };
+  const worker = createProviderInbound({
+    repo: {
+      providerRefreshStates: {
+        findOne: async () => state,
+        updateOne: async (_, update) => { if (update.$set.lastOutcome) completion = update; return { matchedCount: 1 }; },
+      },
+      providerAccounts: { findOne: async () => link },
+      accountSettings: { findOne: async () => null },
+      providerBudgets: {
+        findOne: async () => budget,
+        insertOne: async (record) => { budget = record; },
+        findOneAndUpdate: async (_, update) => Object.assign(budget, update.$set),
+      },
+    },
+    cipher: { decrypt: () => 'token' },
+    now: () => clock,
+    wait: async (ms) => { clock += ms; },
+    adapters: { pull: async (_, __, type) => { calls.push([type, clock]); return { data: [] }; } },
+  });
+  assert.deepEqual(await worker.refresh({ owner: 'test-owner', state }), {
+    status: 'succeeded', counts: { applied: 0, skipped: 0, review: 0 },
+  });
+  assert.deepEqual(calls, [['ANIME', 10000], ['MANGA', 11000]]);
+  assert.equal(completion.$set.lastOutcome, 'success');
+  assert.equal(completion.$unset.manualRequestedAt, '');
+  assert.equal(completion.$unset.leaseUntil, '');
+});
+
 for (const status of [401, 429, 503, undefined]) {
   test(`worker records the failed collection phase and HTTP status ${status}`, async () => {
     const state = { _id: 'link', userId: 'alice', provider: 'anilist', manualRequestedAt: new Date(), attempts: 0 };
@@ -77,7 +158,8 @@ for (const status of [401, 429, 503, undefined]) {
         throw Object.assign(new Error('private response body'), { status });
       } },
     });
-    assert.equal((await worker.refresh({ owner: 'test-owner', state })).status, 'retry');
+    assert.equal((await worker.refresh({ owner: 'test-owner', state })).status, status === 401 ? 'failed' : 'retry');
+    assert.equal(recorded.lastOutcome, status === 401 ? 'reauthorization-required' : 'retry');
     assert.equal(recorded.lastErrorPhase, 'fetch-manga');
     assert.equal(recorded.lastErrorStatus, status ?? null);
     assert.equal(recorded.lastErrorCode, status ? `PROVIDER_HTTP_${status}` : 'PROVIDER_UNAVAILABLE');

@@ -39,14 +39,14 @@ function createProviderCache({ queries, now = () => Date.now(), requestSpacingMs
     else providerTail = run.catch(() => {});
     return run;
   }
-  async function fetchCached(key, fetcher, ttl, consume, { staleWhileRevalidate = false, interactive = false } = {}) {
+  async function fetchCached(key, fetcher, ttl, consume, { staleWhileRevalidate = false, interactive = false, acceptCached = () => true } = {}) {
     if (staleWhileRevalidate) {
       const id = crypto.createHash('sha256').update(key).digest('hex');
       const cached = await queries.findOne({ _id: id });
       if (cached?.payload && new Date(cached.freshUntil).getTime() <= now()) {
         await touch(id, cached);
         const refreshing = new Date(cached.retryAt || 0).getTime() <= now();
-        if (refreshing) void fetchCached(key, fetcher, ttl, consume, { interactive }).catch(() => {});
+        if (refreshing) void fetchCached(key, fetcher, ttl, consume, { interactive, acceptCached }).catch(() => {});
         return { payload: cached.payload, stale: true, refreshing };
       }
     }
@@ -55,7 +55,7 @@ function createProviderCache({ queries, now = () => Date.now(), requestSpacingMs
       const id = crypto.createHash('sha256').update(key).digest('hex');
       const cached = await queries.findOne({ _id: id });
       await touch(id, cached);
-      if (cached?.payload && new Date(cached.freshUntil).getTime() > now()) return { payload: cached.payload, stale: false };
+      if (cached?.payload && new Date(cached.freshUntil).getTime() > now() && acceptCached(cached.payload)) return { payload: cached.payload, stale: false };
       if (new Date(cached?.retryAt || 0).getTime() > now()) {
         if (cached?.payload) return { payload: cached.payload, stale: true };
         throw new Error('Metadata retry is deferred.');

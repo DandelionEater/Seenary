@@ -3,6 +3,7 @@ import { LibraryClient, defaults, emptyState, fields } from './libraryClient.ts'
 import type { Entry, Fields, Reply, State } from './libraryClient.ts';
 import { accountLock, browserStorage } from './browserStorage.ts';
 import { atlasEndpoint, atlasLabel } from './config.ts';
+import { getPreferredTitle, readTitleLanguage, type TitleLanguage } from '../utils/titlePreference.ts';
 import './cloud.css';
 
 const endpoint = atlasEndpoint;
@@ -25,10 +26,16 @@ function download(value: unknown, name: string) {
   const link = document.createElement('a'); link.href = url; link.download = name; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-function title(state: State, id: string) {
-  const media = state.media[id];
-  return String(media?.metadata.title_preferred || media?.metadata.title_english || media?.metadata.title_romaji ||
-    (media?.anilistId ? `AniList #${media.anilistId}` : media?.malId ? `MAL #${media.malId}` : id));
+function mediaTitle(media: State['media'][string] | undefined, language: TitleLanguage, fallback: string) {
+  const metadata = media?.metadata;
+  const title = {
+    userPreferred: metadata?.title_preferred,
+    english: metadata?.title_english,
+    romaji: metadata?.title_romaji,
+    native: metadata?.title_native,
+  };
+  const titles = Object.fromEntries(Object.entries(title).filter(([, value]) => typeof value === 'string' && value.trim()));
+  return Object.keys(titles).length ? getPreferredTitle(titles, language) : fallback;
 }
 
 export default function CloudLibrary() {
@@ -41,6 +48,12 @@ export default function CloudLibrary() {
   const [filter, setFilter] = useState('');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
+  const titleLanguage = readTitleLanguage();
+  const title = (state: State, id: string) => {
+    const media = state.media[id];
+    const fallback = media?.anilistId ? `AniList #${media.anilistId}` : media?.malId ? `MAL #${media.malId}` : id;
+    return mediaTitle(media, titleLanguage, fallback);
+  };
   async function run(task: (client: LibraryClient) => Promise<unknown>, id = active.current) {
     if (!id) return;
     setBusy(true);
@@ -120,7 +133,7 @@ export default function CloudLibrary() {
         {state.candidates.filter(item => !item.done).slice(0, 20).map(item => {
           const media = Object.values(state.media).find(media => media.type === item.type && media[item.provider === 'anilist' ? 'anilistId' : 'malId'] === item.providerId);
           const current = media && state.entries[media._id];
-          return <article key={item.key}><strong>{item.title} ({item.type})</strong>
+          return <article key={item.key}><strong>{mediaTitle(media, titleLanguage, item.title)} ({item.type})</strong>
             <div className="cloud-comparison"><pre>Device: {item.deleted ? 'Deleted' : JSON.stringify(item.patch, null, 2)}</pre><pre>Cloud: {current ? JSON.stringify({ ...fields(current), deleted: current.deleted }, null, 2) : 'No entry in reviewed snapshot'}</pre></div>
             <button disabled={busy} onClick={() => void run(client => client.acceptCandidate(item.key, 'device'))}>{current?.deleted && !item.deleted ? 'Restore using device values' : item.deleted ? 'Apply device deletion' : 'Use device values'}</button>
             <button disabled={busy} onClick={() => void run(client => client.acceptCandidate(item.key, 'cloud'))}>Keep cloud / skip</button>

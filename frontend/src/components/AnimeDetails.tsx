@@ -59,6 +59,8 @@ type AnimeDetailsProps = {
   mediaId: number;
   mediaType: MediaType;
   onBack: () => void;
+  initialScrollTop?: number;
+  onSelectTaxonomy: (kind: "genre" | "tag", name: string, scrollTop: number) => void;
   onSelectMedia?: (mediaId: number, mediaType: MediaType) => void;
   onOpenStudio?: (studio: { id: number; name: string }) => void;
   onListChanged?: () => void | Promise<void>;
@@ -128,6 +130,8 @@ export default function MediaDetails({
   mediaId,
   mediaType,
   onBack,
+  initialScrollTop,
+  onSelectTaxonomy,
   onSelectMedia,
   onOpenStudio,
   onListChanged,
@@ -135,11 +139,16 @@ export default function MediaDetails({
   titleLanguage,
   hideAdultContent,
 }: AnimeDetailsProps) {
+  const scrollRoot = useRef<HTMLDivElement>(null);
+  const attachScrollRoot = useCallback((root: HTMLDivElement | null) => {
+    scrollRoot.current = root;
+    if (root && initialScrollTop !== undefined) root.scrollTop = initialScrollTop;
+  }, [initialScrollTop]);
   const [anime, setAnime] = useState<AnimeMedia | null>(null);
   useEffect(() => {
     if (!anime || anime.id !== mediaId) return;
-    window.dispatchEvent(new CustomEvent('seenary:title-opened', { detail: { id: mediaId, type: mediaType, title: getPreferredTitle(anime.title, titleLanguage) } }));
-  }, [anime, mediaId, mediaType, titleLanguage]);
+    window.dispatchEvent(new CustomEvent('seenary:title-opened', { detail: { id: mediaId, type: mediaType, titles: anime.title, synonyms: anime.synonyms } }));
+  }, [anime, mediaId, mediaType]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [franchiseTimingStatus, setFranchiseTimingStatus] = useState<
@@ -554,13 +563,13 @@ export default function MediaDetails({
     );
   }
 
-  const title = getPreferredTitle(anime.title, titleLanguage);
+  const title = getPreferredTitle(anime.title, titleLanguage, anime.synonyms);
   const isManga = mediaType === "MANGA";
 
   const studios = anime.studios?.nodes?.filter((studio) => studio?.name) ?? [];
 
   const safeTags = (anime.tags ?? [])
-    .filter((tag) => !tag.isMediaSpoiler && !tag.isGeneralSpoiler)
+    .filter((tag) => tag.name?.trim() && !tag.isMediaSpoiler && !tag.isGeneralSpoiler)
     .sort((a, b) => (b.rank ?? 0) - (a.rank ?? 0))
     .slice(0, 12);
 
@@ -587,7 +596,7 @@ export default function MediaDetails({
   return (
     <>
       <div className="relative isolate h-full overflow-hidden rounded-3xl bg-[#0f0f0f] text-white">
-        <div data-global-scroll-root className="scroll-container relative h-full overflow-y-auto">
+        <div ref={attachScrollRoot} data-global-scroll-root className="scroll-container relative h-full overflow-y-auto">
           <div className="relative isolate min-h-full overflow-hidden">
             <AccentGlows seed={`${mediaType}:${mediaId}`} />
           {anime.warning && <p role="status" className="mx-5 mt-4 rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">{anime.warning}</p>}
@@ -807,6 +816,7 @@ export default function MediaDetails({
                     description={anime.description ?? null}
                     genres={anime.genres ?? []}
                     tags={safeTags}
+                    onSelect={(kind, name) => onSelectTaxonomy(kind, name, scrollRoot.current?.scrollTop ?? 0)}
                   />
                 )}
 
@@ -848,6 +858,7 @@ export default function MediaDetails({
                 {relationEdges.length > 0 && (
                   <RelatedAnimeShelf
                     edges={relationEdges}
+                    titleLanguage={titleLanguage}
                     onSelectMedia={onSelectMedia}
                   />
                 )}
@@ -855,6 +866,7 @@ export default function MediaDetails({
                 {recommendations.length > 0 && (
                   <MediaShelf
                     title="Recommendations"
+                    titleLanguage={titleLanguage}
                     icon={StarIcon}
                     onSelectMedia={onSelectMedia}
                     items={recommendations
@@ -1911,13 +1923,17 @@ function ContentSection({
   );
 }
 
+const taxonomyChipClass = "rounded-full border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs text-white/75 transition hover:border-(--app-accent)/45 hover:bg-(--app-accent-soft) hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--app-accent)";
+
 function StoryAndTaxonomy({
   description,
   genres,
   tags,
+  onSelect,
 }: {
   description: string | null;
   genres: string[];
+  onSelect: (kind: "genre" | "tag", name: string) => void;
   tags: Array<{
     id?: number | string | null;
     name?: string | null;
@@ -1994,12 +2010,14 @@ function StoryAndTaxonomy({
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 {genres.map((genre) => (
-                  <span
+                  <button
                     key={genre}
-                    className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs text-white/75"
+                    type="button"
+                    onClick={() => onSelect("genre", genre)}
+                    className={taxonomyChipClass}
                   >
                     {genre}
-                  </span>
+                  </button>
                 ))}
               </div>
             </div>
@@ -2015,18 +2033,17 @@ function StoryAndTaxonomy({
                 <span className="text-[10px] font-medium text-white/25">{tags.length}</span>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
-                {tags.map((tag, index) => (
+                {tags.map(({ id, name, description, rank }, index) => name && (
                   <Tooltip
-                    key={tag.id ?? `${tag.name ?? "tag"}-${index}`}
-                    content={tag.description || tag.name || "Tag"}
-                    focusable
+                    key={id ?? `${name}-${index}`}
+                    content={description || name}
                   >
-                    <span className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs text-white/72">
-                      {tag.name || "Tag"}
-                      {tag.rank ? (
-                        <span className="ml-1.5 text-white/32">{tag.rank}%</span>
+                    <button type="button" onClick={() => onSelect("tag", name)} className={taxonomyChipClass}>
+                      {name}
+                      {rank ? (
+                        <span className="ml-1.5 text-white/45">{rank}%</span>
                       ) : null}
-                    </span>
+                    </button>
                   </Tooltip>
                 ))}
               </div>
@@ -2444,12 +2461,14 @@ function InfoPanel({ label, value }: { label: string; value: string }) {
 
 function RelatedAnimeShelf({
   edges,
+  titleLanguage,
   onSelectMedia,
   showAll = false,
   bare = false,
   libraryActions = false,
 }: {
   edges: RelatedAnimeEdge[];
+  titleLanguage: TitleLanguage;
   onSelectMedia?: (mediaId: number, mediaType: MediaType) => void;
   showAll?: boolean;
   bare?: boolean;
@@ -2463,7 +2482,7 @@ function RelatedAnimeShelf({
   const cards = items.map((edge, index) => {
           const media = edge.node;
           const relation = getRelationDetails(edge.relationType);
-          const titleText = getMediaTitle(media);
+          const titleText = getPreferredTitle(media?.title, titleLanguage);
           const mediaId = Number(media?.id);
           const relatedMediaType = getRelatedMediaType(media);
           const canOpen =
@@ -2626,6 +2645,7 @@ function RelationsModal({
         {watchOpened && anime && <div hidden={view !== "watch"}><WatchOrder seed={anime} titleLanguage={titleLanguage} hideAdultContent={hideAdultContent} onSelect={onSelectMedia ? id => onSelectMedia(id, "ANIME") : undefined} /></div>}
         <div hidden={view !== "relations"}><RelatedAnimeShelf
           edges={edges}
+          titleLanguage={titleLanguage}
           onSelectMedia={onSelectMedia}
           showAll
           bare
@@ -2666,10 +2686,10 @@ function MediaShelf({
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   items: Array<{ label: string; media: RecommendationMedia; dislikes?: number }>;
   onSelectMedia?: (mediaId: number, mediaType: MediaType) => void;
-  titleLanguage?: TitleLanguage;
+  titleLanguage: TitleLanguage;
 }) {
   const cards = items.map(({ label, media, dislikes }, index) => {
-    const titleText = titleLanguage ? getPreferredTitle(media.title, titleLanguage) : getMediaTitle(media);
+    const titleText = getPreferredTitle(media.title, titleLanguage);
     const mediaId = Number(media?.id);
     const recommendationType = getRelatedMediaType(media);
     const canOpen =
@@ -4271,12 +4291,6 @@ function getPersonName(person: Person | null | undefined) {
     person?.name?.native ||
     "Unknown"
   );
-}
-
-function getMediaTitle(
-  media: AnimeMedia | RecommendationMedia | RelatedMedia | null | undefined
-) {
-  return getPreferredTitle(media?.title, "userPreferred");
 }
 
 function getTrailerUrl(trailer?: {

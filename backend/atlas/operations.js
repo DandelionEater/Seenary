@@ -1,4 +1,20 @@
 const { calculateObjectSize } = require('bson');
+
+function productionWebOrigins(env, apiOrigin = new URL(env.API_PUBLIC_ORIGIN).origin) {
+  const origins = String(env.WEB_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean).map(value => {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.pathname !== '/' || url.search || url.hash || url.username || url.password) {
+      throw new Error('WEB_ORIGINS must contain HTTPS origins.');
+    }
+    return url.origin;
+  });
+  if (apiOrigin === 'https://api.seenary.app') {
+    origins.push('https://web.seenary.app');
+  }
+  if (!origins.length) throw new Error('WEB_ORIGINS must contain an HTTPS origin.');
+  return [...new Set(origins)];
+}
+
 function validateDeployment(env = process.env, mode = 'staging') {
   if (!['staging', 'production'].includes(mode)) throw new Error('Invalid deployment mode.');
   const required = ['MONGODB_URI', 'MONGODB_DATABASE', 'MONGODB_USERNAME', 'MONGODB_PASSWORD', 'TOKEN_ENCRYPTION_KEY',
@@ -21,7 +37,7 @@ function validateDeployment(env = process.env, mode = 'staging') {
       try { const url = new URL(env[name]); if (url.protocol !== 'https:' || url.origin !== apiOrigin || url.pathname !== pathname || url.search || url.hash) errors.push(`callback:${name}`); }
       catch { errors.push(`invalid:${name}`); }
     }
-    if (!String(env.WEB_ORIGINS || '').split(',').every(value => { try { const url = new URL(value.trim()); return url.protocol === 'https:' && url.pathname === '/' && !url.search && !url.hash; } catch { return false; } })) errors.push('https:WEB_ORIGINS');
+    try { productionWebOrigins(env, apiOrigin); } catch { errors.push('https:WEB_ORIGINS'); }
   }
   return { ok: errors.length === 0, mode, checks: required.length + (mode === 'production' ? 4 : 1), errors: [...new Set(errors)].sort() };
 }
@@ -41,4 +57,4 @@ async function healthReport(db, now = Date.now(), prefix = '') {
     queryCache: { documents: queries.length, bytes: queryBytes, budgetBytes: queryBudget || null, overBudget: queryBudget > 0 && queryBytes > queryBudget },
     storage: { dataBytes: Number(stats.dataSize || 0), storageBytes, budgetBytes: totalBudget || null, level } };
 }
-module.exports = { validateDeployment, healthReport };
+module.exports = { validateDeployment, healthReport, productionWebOrigins };

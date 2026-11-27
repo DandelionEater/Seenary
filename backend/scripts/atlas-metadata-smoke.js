@@ -197,6 +197,27 @@ async function main() {
   const missingShelf = await service.query('getDiscoverShelfAnime', ['seasonal', 2, true, 'ANIME']);
   assert.equal(missingShelf.items.length, 0); assert(missingShelf.warning);
   assert.equal(missingShelf.pageInfo.currentPage, 2, 'uncached page never substitutes a different ranking');
+  await service.ingest({ id: 1, title: { english: 'Saved English', native: '保存済み' }, synonyms: ['An Alias'] }, 'ANIME', 'details', clock);
+  let shelfFetches = 0;
+  provider.shelf = async () => {
+    shelfFetches++;
+    return { id: 'browse-new', items: [{ id: 1, title: { english: null, romaji: 'Current romaji' }, synonyms: [] }] };
+  };
+  const oldShelfKey = require('node:crypto').createHash('sha256')
+    .update(JSON.stringify(['getDiscoverShelfAnime', 'browse-new', 1, true, 'ANIME'])).digest('hex');
+  await queries.updateOne({ _id: oldShelfKey }, { $set: {
+    payload: { id: 'browse-new', items: [{ id: 1, title: { romaji: 'Old page without aliases' } }] },
+    freshUntil: new Date(clock + 3600000),
+  } }, { upsert: true });
+  const fresh = await service.query('getDiscoverShelfAnime', ['browse-new', 1, true, 'ANIME']);
+  assert.equal(shelfFetches, 1, 'pre-alias cached pages refresh even before their normal expiry');
+  assert.equal(fresh.items[0].title.english, 'Saved English');
+  assert.equal(fresh.items[0].title.native, '保存済み');
+  assert.equal(fresh.items[0].title.romaji, 'Current romaji');
+  assert.deepEqual(fresh.items[0].synonyms, ['An Alias']);
+  const cachedFresh = await service.query('getDiscoverShelfAnime', ['browse-new', 1, true, 'ANIME']);
+  assert.deepEqual(cachedFresh.items[0].title, fresh.items[0].title);
+  assert.equal(shelfFetches, 1, 'current cached pages need no extra provider fetches');
   const server = createStagingServer({ getSession: async token => ({ authenticated: token === 'test-token', user: token === 'test-token' ? { id: 'alice' } : null }) }, null, null, null, service);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {

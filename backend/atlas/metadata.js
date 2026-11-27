@@ -341,7 +341,7 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
         if (text.length < 2 || text.length > 150) return { anime: [], manga: [], characters: [], studios: [] };
         const hideAdultContent = args[1] !== false;
         try {
-          const result = await fetchCached(JSON.stringify([method, 'taxonomy-v3', text.toLowerCase(), hideAdultContent]), () => provider.search(text, hideAdultContent), payload => payload.warnings?.length ? 15000 : HOUR, (payload, time) => {
+          const result = await fetchCached(JSON.stringify([method, 'taxonomy-v4', text.toLowerCase(), hideAdultContent]), () => provider.search(text, hideAdultContent), payload => payload.warnings?.length ? 15000 : HOUR, (payload, time) => {
             if (!Array.isArray(payload?.anime) || !Array.isArray(payload?.manga)) throw new Error('Invalid search response.');
             return ingestTree(payload, null, time);
           }, { interactive: true, staleWhileRevalidate: true });
@@ -393,8 +393,23 @@ function createMetadataService({ media, repo, queries, provider, malCache = null
           const result = await fetchCached(JSON.stringify([method, shelfId, inputPage, hideAdultContent, type]), () => provider.shelf(shelfId, inputPage, hideAdultContent, type), HOUR, (payload, time) => {
             if (!Array.isArray(payload?.items)) throw new Error('Invalid shelf response.');
             return ingestTree(payload.items, type, time);
-          });
-          return { ...result.payload, ...(result.stale ? { warning: 'Showing a saved page while AniList is unavailable.' } : {}) };
+          }, { acceptCached: payload => payload.items?.every(item => Object.hasOwn(item, 'synonyms')) === true });
+          const items = result.payload.items;
+          const hasTitle = value => typeof value === 'string' && Boolean(value.trim());
+          const incomplete = items.filter(({ id, title }) => validId(id) && ['english', 'romaji', 'native', 'userPreferred'].some(key => !hasTitle(title?.[key])));
+          if (!incomplete.length) return { ...result.payload, ...(result.stale ? { warning: 'Showing a saved page while AniList is unavailable.' } : {}) };
+          // Ranked pages can have fewer title variants than the canonical catalog.
+          // Fill gaps at read time so previously cached pages benefit too.
+          const saved = await repo.media.find({ type, anilistId: { $in: incomplete.map(item => item.id) } }).toArray();
+          const metadataById = new Map(saved.map(({ anilistId, metadata }) => [anilistId, metadata]));
+          return { ...result.payload, items: items.map(item => {
+            const metadata = metadataById.get(item.id);
+            if (!metadata) return item;
+            const supplied = Object.fromEntries(Object.entries(item.title ?? {}).filter(([, value]) => hasTitle(value)));
+            return { ...item, synonyms: item.synonyms?.length ? item.synonyms : metadata.synonyms ?? item.synonyms,
+              title: { english: metadata.title_english, romaji: metadata.title_romaji,
+                native: metadata.title_native, userPreferred: metadata.title_preferred, ...supplied } };
+          }), ...(result.stale ? { warning: 'Showing a saved page while AniList is unavailable.' } : {}) };
         } catch {
           // Do not pretend arbitrary saved titles are the requested ranking/page.
           return { id: shelfId, items: [], pageInfo: { currentPage: inputPage, lastPage: inputPage, hasNextPage: false }, warning: 'This discovery page is not cached and AniList is unavailable.' };

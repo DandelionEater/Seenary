@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { createStagingServer } = require('../atlas/stagingServer');
 const { createAnalyticsReportHandler } = require('../atlas/analyticsReports');
+const { productionWebOrigins } = require('../atlas/operations');
 
 async function main() {
   const previousMode = process.env.ATLAS_CLIENT_GATE_MODE; const previousMinimum = process.env.ATLAS_MIN_CLIENT_VERSION;
@@ -24,7 +25,10 @@ async function main() {
   const analytics = { report: async () => ({ generatedAt: '2026-09-22T12:00:00.000Z', overview: { days: 14, startDate: '2026-09-09', endDate: '2026-09-22', observedActiveAccounts: 2, registeredAccounts: 3, unavailable: false }, daily: [{ activityDate: '2026-09-22', dailyActiveUsers: 2 }], monthly: [{ month: '2026-09', monthlyActiveUsers: 2, averageActiveDays: 1, dauMau: 1, platformActiveDays: { windows: 2 }, versionActiveDays: { '0.2.1-beta': 2 } }] }) };
   const reportHandler = createAnalyticsReportHandler(analytics, { ANALYTICS_REPORT_USERNAME: 'reports', ANALYTICS_REPORT_PASSWORD: 'a-secure-report-password' });
   const server = createStagingServer(service, providers, null, null, null, null, { loopbackOnly: false, secureCookies: true,
-    cookieName: 'seenary_sid', allowedOrigins: ['https://seenary.app'], analyticsReportHandler: reportHandler,
+    cookieName: 'seenary_sid', allowedOrigins: productionWebOrigins({
+      API_PUBLIC_ORIGIN: 'https://api.seenary.app',
+      WEB_ORIGINS: 'https://seenary.app/',
+    }), analyticsReportHandler: reportHandler,
     healthCheck: async () => ({ ok: true, storage: { level: 'ok' } }) });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -32,12 +36,21 @@ async function main() {
     const health = await fetch(`${origin}/health`); assert.equal(health.status, 200); assert.equal((await health.json()).storage.level, 'ok');
     const blockedOrigin = await fetch(`${origin}/rpc`, { method: 'POST', headers: { Origin: 'https://evil.example', 'Content-Type': 'application/json', 'X-Seenary-Version': '0.1.12-beta' }, body: JSON.stringify({ method: 'getSession', args: [] }) });
     assert.equal(blockedOrigin.status, 403);
+    assert.equal(blockedOrigin.headers.get('access-control-allow-origin'), null);
     const old = await fetch(`${origin}/rpc`, { method: 'POST', headers: { Origin: 'https://seenary.app', 'Content-Type': 'application/json', 'X-Seenary-Version': '0.1.11' }, body: JSON.stringify({ method: 'getSession', args: [] }) });
     assert.equal(old.status, 426); assert.equal((await old.json()).minimumVersion, '0.1.12-beta');
-    const preflight = await fetch(`${origin}/rpc`, { method: 'OPTIONS', headers: { Origin: 'https://seenary.app' } });
+    assert.equal(old.headers.get('access-control-allow-origin'), 'https://seenary.app');
+    const webOrigin = 'https://web.seenary.app';
+    const preflight = await fetch(`${origin}/rpc`, { method: 'OPTIONS', headers: {
+      Origin: webOrigin, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type,x-seenary-version',
+    } });
     assert.equal(preflight.status, 204); assert.match(preflight.headers.get('access-control-allow-headers'), /X-Seenary-Version/i);
-    const registered = await fetch(`${origin}/rpc`, { method: 'POST', headers: { Origin: 'https://seenary.app', 'Content-Type': 'application/json', 'X-Seenary-Version': '0.1.12-beta' }, body: JSON.stringify({ method: 'register', args: ['user', 'password'] }) });
+    assert.equal(preflight.headers.get('access-control-allow-origin'), webOrigin);
+    assert.equal(preflight.headers.get('access-control-allow-credentials'), 'true');
+    const registered = await fetch(`${origin}/rpc`, { method: 'POST', headers: { Origin: webOrigin, 'Content-Type': 'application/json', 'X-Seenary-Version': '0.1.12-beta' }, body: JSON.stringify({ method: 'register', args: ['user', 'password'] }) });
     assert.equal(registered.status, 200); assert.match(registered.headers.get('set-cookie'), /^seenary_sid=/); assert.match(registered.headers.get('set-cookie'), /; Secure/);
+    assert.equal(registered.headers.get('access-control-allow-origin'), webOrigin);
+    assert.equal(registered.headers.get('access-control-allow-credentials'), 'true');
     assert.equal(registered.headers.get('strict-transport-security'), 'max-age=31536000; includeSubDomains');
     assert.equal((await registered.json()).token, undefined);
     const sessionCookie = registered.headers.get('set-cookie').split(';')[0];

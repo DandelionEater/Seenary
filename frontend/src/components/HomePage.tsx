@@ -59,7 +59,7 @@ import {
 
 const HOME_DISCOVER_STATE_STORAGE_KEY = "seenary.discover-state";
 const HOME_DISCOVER_STATE_LEGACY_STORAGE_KEY = "media-tracker.discover-state";
-const HOME_DISCOVER_STATE_VERSION = 2;
+const HOME_DISCOVER_STATE_VERSION = 3;
 const HOME_PERSONAL_LAYOUT_STORAGE_KEY = "seenary.personal-layout-order";
 const HOME_PERSONAL_LAYOUT_LEGACY_STORAGE_KEY = "media-tracker.personal-layout-order";
 const HOME_MANGA_PERSONAL_LAYOUT_STORAGE_KEY = "seenary.manga-personal-layout-order";
@@ -359,6 +359,7 @@ type RecommendationCandidate = {
 
 type TrendingAnime = {
   id: number;
+  synonyms?: string[] | null;
   isAdult?: boolean;
   title?: {
     romaji?: string | null;
@@ -513,6 +514,7 @@ type HomePageProps = {
 
 type QuickAddAnime = {
   id: number;
+  synonyms?: string[] | null;
   title: {
     romaji?: string;
     english?: string;
@@ -1245,6 +1247,33 @@ export function HomePage({
       } satisfies SavedDiscoverState)
     );
   }, [activeDiscoverShelfId, discoverShelfPages, mediaType]);
+
+  useEffect(() => {
+    if (activeHomeTab !== "discover" || activeDiscoverShelfId !== "browse-new") return;
+    const stateKey = getDiscoverShelfStateKey(mediaType, activeDiscoverShelfId);
+    const saved = discoverShelfPagesRef.current[stateKey];
+    if (!saved || saved.isLoading || !saved.items.some(item => item.synonyms === undefined)) return;
+
+    let cancelled = false;
+    void (async () => {
+      const refreshed = new Map<number, TrendingAnime>();
+      for (let page = 1; page <= saved.page && !cancelled; page++) {
+        try {
+          const result = await window.api.getDiscoverShelfAnime(activeDiscoverShelfId, page, hideAdultContent, mediaType);
+          for (const item of result.items ?? []) refreshed.set(item.id, item);
+        } catch {
+          // Keep the visible results if a revalidation request fails.
+        }
+      }
+      if (cancelled || !refreshed.size) return;
+      setDiscoverShelfPages(current => {
+        const state = current[stateKey];
+        if (!state) return current;
+        return { ...current, [stateKey]: { ...state, items: state.items.map(item => refreshed.get(item.id) ?? item) } };
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [activeDiscoverShelfId, activeHomeTab, hideAdultContent, mediaType]);
 
   function restoreDiscoverOverviewPosition() {
     window.requestAnimationFrame(() => {
@@ -2730,7 +2759,7 @@ function MangaSpotlightPanel({
     <button
       type="button"
       onClick={() => onSelectManga(entry.manga_id)}
-      className="group relative h-full min-h-0 w-full overflow-hidden rounded-3xl border border-white/10 bg-white/5 text-left shadow-xl focus:outline-none focus:ring-2 focus:ring-white/55"
+      className="group relative h-full min-h-0 w-full overflow-hidden rounded-3xl border border-white/10 bg-white/5 text-left shadow-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-white/55"
     >
       <HeroBackdrop
         bannerImage={entry.banner_image ?? null}
@@ -5237,7 +5266,7 @@ function SpotlightPanel({
     <button
       type="button"
       onClick={() => onSelectAnime(entry.anime_id)}
-      className="group relative min-h-72 overflow-hidden rounded-3xl border border-white/10 bg-white/5 text-left shadow-xl focus:outline-none focus:ring-2 focus:ring-white/55"
+      className="group relative min-h-72 overflow-hidden rounded-3xl border border-white/10 bg-white/5 text-left shadow-xl focus:outline-none"
     >
       <HeroBackdrop
         bannerImage={entry.banner_image ?? null}
@@ -6185,7 +6214,7 @@ function getEntryTitle(entry: TrackedAnimeEntry, titleLanguage: TitleLanguage) {
 }
 
 function getTrendingTitle(anime: TrendingAnime, titleLanguage: TitleLanguage) {
-  return getPreferredTitle(anime.title, titleLanguage);
+  return getPreferredTitle(anime.title, titleLanguage, anime.synonyms);
 }
 
 function getProgressLabel(entry: TrackedAnimeEntry) {
@@ -6737,6 +6766,7 @@ function mergeAnimeItems(currentItems: TrendingAnime[], nextItems: TrendingAnime
 function toQuickAddAnime(anime: TrendingAnime): QuickAddAnime {
   return {
     id: anime.id,
+    synonyms: anime.synonyms,
     title: {
       romaji: anime.title?.romaji ?? undefined,
       english: anime.title?.english ?? undefined,

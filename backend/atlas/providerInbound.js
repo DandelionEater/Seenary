@@ -1,6 +1,8 @@
 const crypto = require('node:crypto');
 const { createProviderBudget } = require('./providerBudget');
 const { DEFAULT_FIELDS, entryKey } = require('./library');
+const LEASE_MS = 5 * 60000;
+const MAX_PULL_ATTEMPTS = 6;
 
 const STATUS = { CURRENT: 'watching', REPEATING: 'watching', PLANNING: 'planned', COMPLETED: 'completed', PAUSED: 'paused', DROPPED: 'dropped',
   watching: 'watching', reading: 'watching', completed: 'completed', on_hold: 'paused', dropped: 'dropped', plan_to_watch: 'planned', plan_to_read: 'planned' };
@@ -42,9 +44,21 @@ function normalize(provider, type, payload) {
   return result;
 }
 
-function createProviderInbound({ client, repo, media, cipher, adapters, metadata = {}, now = () => Date.now(), spacing, intervalMs = 6 * 3600000 }) {
+function createProviderInbound({ client, repo, media, cipher, adapters, metadata = {}, now = () => Date.now(), spacing, intervalMs = 6 * 3600000,
+  wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) }) {
   const budget = createProviderBudget({ collection: repo.providerBudgets, now, spacing });
-  async function reserve(provider) { const slot = await budget.reserve(provider); if (!slot.ok) throw Object.assign(new Error('Budget busy'), { code: 'PROVIDER_BUDGET', retryAfter: slot.retryAfter }); }
+  async function reserve(provider, checkActive) {
+    let slot = await budget.reserve(provider);
+    // A fast response can leave the previous request's spacing window open.
+    // Wait inside the current pull before falling back to the worker's retry queue.
+    const deadline = now() + 5000;
+    while (!slot.ok && now() + slot.retryAfter * 1000 <= deadline) {
+      await wait(slot.retryAfter * 1000);
+      await checkActive?.();
+      slot = await budget.reserve(provider);
+    }
+    if (!slot.ok) throw Object.assign(new Error('Budget busy'), { code: 'PROVIDER_BUDGET', retryAfter: slot.retryAfter });
+  }
   async function seed(limit = 100) {
     const links = await repo.providerAccounts.find({ needsReauthorization: { $ne: true } }).limit(limit).toArray();
     for (const link of links) {
@@ -92,7 +106,7 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
       const linked = await repo.providerAccounts.findOneAndUpdate({ _id: link._id, userId, provider, revision: link.revision, needsReauthorization: { $ne: true } },
         { $inc: { inboundRevision: 1 } }, { session, returnDocument: 'after' });
       if (!linked) return 'claim-lost';
-      const owned = await repo.providerRefreshStates.findOneAndUpdate({ _id: claim.state._id, leaseOwner: claim.owner },
+      const owned = await repo.providerRefreshStates.findOneAndUpdate({ _id: claim.state._id, leaseOwner: claim.owner, leaseUntil: { $gt: new Date(now()) } },
         { $inc: { revision: 1 } }, { session, returnDocument: 'after' });
       if (!owned) return 'claim-lost';
       const id = entryKey(userId, mediaId); const current = await repo.libraryEntries.findOne({ _id: id }, { session });
@@ -125,82 +139,96 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
     }); } finally { await session.endSession(); }
   }
   async function finish(claim, update) {
-    return repo.providerRefreshStates.updateOne({ _id: claim.state._id, leaseOwner: claim.owner }, { ...update,
+    return repo.providerRefreshStates.updateOne({ _id: claim.state._id, leaseOwner: claim.owner, leaseUntil: { $gt: new Date(now()) } }, { ...update,
       $unset: { ...(update.$unset || {}), progress: '', leaseOwner: '', leaseUntil: '' }, $inc: { revision: 1 } });
   }
   const service = {
     seed,
-    async claimBatch(limit = 10) {
+    async runOnce(limit = 10) {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid refresh limit.');
-      await seed(Math.min(limit * 10, 500)); const due = await repo.providerRefreshStates.find({ nextAttemptAt: { $lte: new Date(now()) },
+      await seed(Math.min(limit * 10, 500));
+      const due = await repo.providerRefreshStates.find({ nextAttemptAt: { $lte: new Date(now()) },
         $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lte: new Date(now()) } }] }).sort({ nextAttemptAt: 1 }).limit(limit * 10).toArray();
-      const claims = [];
+      const results = [];
       for (const state of due) {
-        if (claims.length >= limit) break; const owner = crypto.randomUUID();
+        if (results.length >= limit) break;
+        const owner = crypto.randomUUID();
+        const claimedAt = new Date(now());
         const held = await repo.providerRefreshStates.findOneAndUpdate({ _id: state._id, revision: state.revision,
-          $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lte: new Date(now()) } }] },
-        { $set: { leaseOwner: owner, leaseUntil: new Date(now() + 5 * 60000),
-          progress: { stage: 'starting', current: 0, total: null, updatedAt: new Date(now()) } } }, { returnDocument: 'after' });
-        if (held) claims.push({ owner, state: held });
+          nextAttemptAt: { $lte: claimedAt },
+          $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lte: claimedAt } }] },
+        { $set: { leaseOwner: owner, leaseUntil: new Date(+claimedAt + LEASE_MS),
+          progress: { stage: 'starting', current: 0, total: null, updatedAt: claimedAt } }, $inc: { revision: 1 } }, { returnDocument: 'after' });
+        if (held) results.push(await service.refresh({ owner, state: held }));
       }
-      return claims;
+      return { claimed: results.length, results };
     },
     async refresh(claim) {
-      const observedAt = now(); const state = await repo.providerRefreshStates.findOne({ _id: claim.state._id, leaseOwner: claim.owner });
+      const observedAt = now(); const state = await repo.providerRefreshStates.findOne({ _id: claim.state._id, leaseOwner: claim.owner, leaseUntil: { $gt: new Date(observedAt) } });
       if (!state) return { status: 'claim-lost' };
       let link = await repo.providerAccounts.findOne({ _id: state._id, userId: state.userId, provider: state.provider });
       const settings = await repo.accountSettings.findOne({ _id: state.userId });
       const manual = Boolean(state.manualRequestedAt);
-      if (!link || (!manual && settings?.autoSyncEnabled !== true) || link.needsReauthorization) {
-        await finish(claim, { $set: { nextAttemptAt: new Date(observedAt + intervalMs), lastOutcome: !link ? 'unlinked' : link.needsReauthorization ? 'reauthorization-required' : 'disabled' },
+      const needsReauthorization = link?.needsReauthorization || (state.lastOutcome === 'reauthorization-required' && state.linkRevision === link?.revision);
+      if (!link || (!manual && settings?.autoSyncEnabled !== true) || needsReauthorization) {
+        await finish(claim, { $set: { nextAttemptAt: new Date(observedAt + intervalMs), lastOutcome: !link ? 'unlinked' : needsReauthorization ? 'reauthorization-required' : 'disabled' },
           ...(manual ? { $unset: { manualRequestedAt: '' } } : {}) });
         return { status: 'skipped' };
       }
+      let renewAt = observedAt + 60000;
       const checkActive = async () => {
+        const checkedAt = now();
+        const filter = { _id: state._id, leaseOwner: claim.owner, leaseUntil: { $gt: new Date(checkedAt) } };
+        const renew = checkedAt >= renewAt;
         const [linked, owned] = await Promise.all([
           repo.providerAccounts.findOne({ _id: link._id, userId: state.userId, needsReauthorization: { $ne: true } }),
-          repo.providerRefreshStates.findOne({ _id: state._id, leaseOwner: claim.owner }),
+          renew ? repo.providerRefreshStates.findOneAndUpdate(filter, { $set: { leaseUntil: new Date(checkedAt + LEASE_MS) } }, { returnDocument: 'after' })
+            : repo.providerRefreshStates.findOne(filter),
         ]);
         if (!linked || !owned) throw Object.assign(new Error('Pull cancelled'), { code: 'PULL_CANCELLED' });
+        if (renew) renewAt = checkedAt + 60000;
       };
       let phase = 'authorization';
+      const fetched = {};
+      const report = (stage, current, total) => repo.providerRefreshStates.updateOne(
+        { _id: state._id, leaseOwner: claim.owner, leaseUntil: { $gt: new Date(now()) } },
+        { $set: { progress: { stage, current, total, fetched, updatedAt: new Date(now()) } } });
       try {
-        await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
-          { $set: { progress: { stage: 'fetching', current: 0, total: null, updatedAt: new Date(now()) } } });
+        await report('fetching', 0, 2);
         const access = await token(link); await checkActive(); link = await repo.providerAccounts.findOne({ _id: link._id });
         if (!link) return { status: 'skipped' };
         const all = [];
         for (const type of ['ANIME', 'MANGA']) {
           phase = type === 'ANIME' ? 'fetch-anime' : 'fetch-manga';
           await checkActive();
-          await reserve(link.provider);
+          await reserve(link.provider, checkActive);
           await checkActive();
-          const payload = await adapters.pull(link.provider, access, type, link.providerUserId);
+          const payload = await adapters.pull(link.provider, access, type, link.providerUserId, checkActive);
           await checkActive();
           phase = type === 'ANIME' ? 'normalize-anime' : 'normalize-manga';
-          all.push(...normalize(link.provider, type, payload));
+          const items = normalize(link.provider, type, payload);
+          all.push(...items);
+          fetched[type] = items.length;
+          await report('fetching', Object.keys(fetched).length, 2);
         }
         if (link.provider === 'anilist' && metadata.anilist) {
           phase = 'hydrate';
-          await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
-            { $set: { progress: { stage: 'hydrating', current: 0, total: all.length, updatedAt: new Date(now()) } } });
+          await report('hydrating', 0, all.length);
           for (let index = 0; index < all.length; index++) {
             await checkActive();
             await metadata.anilist(all[index].publicMedia, all[index].type, observedAt);
-            if ((index + 1) % 10 === 0 || index + 1 === all.length) await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
-              { $set: { progress: { stage: 'hydrating', current: index + 1, total: all.length, updatedAt: new Date(now()) } } });
+            if ((index + 1) % 10 === 0 || index + 1 === all.length) await report('hydrating', index + 1, all.length);
           }
         }
         if (link.provider === 'mal') {
           phase = 'mapping';
           let mapped = 0;
-          await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
-            { $set: { progress: { stage: 'mapping', current: 0, total: all.length, updatedAt: new Date(now()) } } });
+          await report('mapping', 0, all.length);
           for (const type of ['ANIME', 'MANGA']) {
             const items = all.filter(item => item.type === type); const ids = items.map(item => item.providerId);
             for (let offset = 0; offset < ids.length; offset += 50) {
               await checkActive();
-              await reserve('anilist'); await checkActive(); const rows = await adapters.mapMal(type, ids.slice(offset, offset + 50));
+              await reserve('anilist', checkActive); await checkActive(); const rows = await adapters.mapMal(type, ids.slice(offset, offset + 50));
               const byMal = new Map((rows || []).filter(row => row.type === type && Number.isSafeInteger(row.idMal)).map(row => [row.idMal, row]));
               for (const item of items.slice(offset, offset + 50)) {
                 await checkActive();
@@ -209,8 +237,7 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
                 if (metadata.mal) await metadata.mal(item.publicMedia, type, observedAt);
               }
               mapped += Math.min(50, ids.length - offset);
-              await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
-                { $set: { progress: { stage: 'mapping', current: mapped, total: all.length, updatedAt: new Date(now()) } } });
+              await report('mapping', mapped, all.length);
             }
           }
         }
@@ -228,10 +255,10 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
           return !entry || new Date(entry.inboundSources?.[link.provider] || 0).getTime() < item.remoteUpdatedAt;
         });
         const counts = { applied: 0, skipped: all.length - pending.length, review: 0 };
-        await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
-          { $set: { progress: { stage: 'reconciling', current: 0, total: pending.length, updatedAt: new Date(now()) } } });
+        await report('reconciling', 0, pending.length);
         for (let index = 0; index < pending.length; index++) {
           const item = pending[index];
+          await checkActive();
           const stillLinked = await repo.providerAccounts.findOne({ _id: link._id, userId: state.userId, provider: link.provider });
           const stillOwned = await repo.providerRefreshStates.findOne({ _id: state._id, leaseOwner: claim.owner });
           if (!stillLinked || !stillOwned || stillLinked.needsReauthorization) {
@@ -245,37 +272,50 @@ function createProviderInbound({ client, repo, media, cipher, adapters, metadata
             catch (error) { if (['MAPPING_REVIEW_REQUIRED', 'MAPPING_CONFLICT'].includes(error.code)) counts.review++; else throw error; }
           }
           const outcome = await apply(state.userId, link.provider, item, document._id, observedAt, claim, link);
-          if (outcome === 'claim-lost') return { status: 'skipped', counts };
+          if (outcome === 'claim-lost') {
+            await finish(claim, { $set: { nextAttemptAt: new Date(now() + 30000), lastOutcome: 'link-changed' } });
+            return { status: 'skipped', counts };
+          }
           if (outcome === 'applied') counts.applied++; else counts.skipped++;
           if ((index + 1) % 10 === 0 || index + 1 === pending.length) {
-            await repo.providerRefreshStates.updateOne({ _id: state._id, leaseOwner: claim.owner },
-              { $set: { progress: { stage: 'reconciling', current: index + 1, total: pending.length, updatedAt: new Date(now()) } } });
+            await report('reconciling', index + 1, pending.length);
           }
         }
         phase = 'finish';
-        await finish(claim, { $set: { linkRevision: link.revision, nextAttemptAt: new Date(now() + intervalMs), lastSuccessAt: new Date(now()),
-          lastOutcome: 'success', lastCounts: counts, attempts: 0 }, $unset: { progress: '', lastErrorCode: '', lastErrorStatus: '', lastErrorPhase: '', ...(manual ? { manualRequestedAt: '' } : {}) } });
+        const completed = await finish(claim, { $set: { linkRevision: link.revision, nextAttemptAt: new Date(now() + intervalMs), lastSuccessAt: new Date(now()),
+          lastOutcome: 'success', lastCounts: counts, attempts: 0 }, $unset: { progress: '', lastErrorCode: '', lastErrorStatus: '', lastErrorPhase: '', manualRequestedAt: '', retryAfterUntil: '' } });
+        if (completed.matchedCount === 0) return { status: 'skipped', counts };
         return { status: 'succeeded', counts };
       } catch (error) {
         if (error.code === 'PULL_CANCELLED') return { status: 'skipped' };
         const status = Number(error.status);
         const httpStatus = Number.isInteger(status) && status >= 400 && status <= 599 ? status : null;
-        const attempts = (state.attempts || 0) + 1; const retry = error.retryAfter ? error.retryAfter * 1000 : Math.min(30000 * 2 ** (attempts - 1), 6 * 3600000);
-        await finish(claim, { $set: { attempts, nextAttemptAt: new Date(now() + retry), lastOutcome: error.terminal ? 'reauthorization-required' : 'retry',
+        const reauthorize = error.terminal || (httpStatus === 401 && ['authorization', 'fetch-anime', 'fetch-manga'].includes(phase))
+          || (link.provider === 'mal' && phase === 'authorization' && httpStatus === 400);
+        const attempts = (state.lastOutcome === 'failed' ? 0 : state.attempts || 0) + 1;
+        const exhausted = attempts >= MAX_PULL_ATTEMPTS || error.code === 'MAL_PAGINATION_LIMIT';
+        const failedAt = now();
+        const retryAfter = Number(error.retryAfter) * 1000;
+        const retry = retryAfter > 0 && Number.isFinite(+new Date(failedAt + retryAfter))
+          ? retryAfter : Math.min(30000 * 2 ** (attempts - 1), 6 * 3600000);
+        await finish(claim, { $set: { attempts,
+          nextAttemptAt: new Date(failedAt + (reauthorize || exhausted ? Math.max(intervalMs, retry) : retry)),
+          lastOutcome: reauthorize ? 'reauthorization-required' : exhausted ? 'failed' : 'retry',
+          ...(reauthorize ? { linkRevision: link.revision } : {}),
+          ...(httpStatus === 429 ? { retryAfterUntil: new Date(failedAt + retry) } : {}),
           lastErrorCode: /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code || '') ? error.code : httpStatus ? `PROVIDER_HTTP_${httpStatus}` : 'PROVIDER_UNAVAILABLE',
-          lastErrorStatus: httpStatus, lastErrorPhase: phase }, $unset: { progress: '' } });
-        return { status: error.terminal ? 'failed' : 'retry' };
+          lastErrorStatus: httpStatus, lastErrorPhase: phase }, $unset: { progress: '', ...((reauthorize || exhausted) && manual ? { manualRequestedAt: '' } : {}) } });
+        return { status: reauthorize || exhausted ? 'failed' : 'retry' };
       }
     },
-    async runOnce(limit = 10) { const claims = await service.claimBatch(limit); const results = []; for (const claim of claims) results.push(await service.refresh(claim)); return { claimed: claims.length, results }; },
   };
   return service;
 }
 
 function createInboundAdapters({ anilist, mal, providerAdapters }) {
-  return { refresh: token => providerAdapters.mal.refresh(token), mapMal: (type, ids) => anilist.getMediaByMalIds(ids, type),
-    pull: (provider, token, type, userId) => provider === 'anilist'
-      ? type === 'ANIME' ? anilist.getViewerAnimeCollection(token, Number(userId)) : anilist.getViewerMangaCollection(token, Number(userId))
-      : type === 'ANIME' ? mal.getViewerAnimeList(token, { maxEntries: 5000 }) : mal.getViewerMangaList(token, { maxEntries: 5000 }) };
+  return { refresh: token => providerAdapters.mal.refresh(token), mapMal: (type, ids) => anilist.getMediaByMalIds(ids, type, { attempts: 1 }),
+    pull: (provider, token, type, userId, checkActive) => provider === 'anilist'
+      ? type === 'ANIME' ? anilist.getViewerAnimeCollection(token, Number(userId), { attempts: 1 }) : anilist.getViewerMangaCollection(token, Number(userId), { attempts: 1 })
+      : type === 'ANIME' ? mal.getViewerAnimeList(token, { maxEntries: 5000, checkActive, attempts: 1 }) : mal.getViewerMangaList(token, { maxEntries: 5000, checkActive, attempts: 1 }) };
 }
 module.exports = { createProviderInbound, createInboundAdapters, normalize };

@@ -1,6 +1,6 @@
 {
   "name": "seenary",
-  "version": "0.2.5-beta",
+  "version": "0.2.6-beta",
   "description": "Anime and media tracking desktop app.",
   "desktopName": "seenary",
   "main": "main.js",
@@ -84,7 +84,7 @@
     "test:discover-filters": "node scripts/discover-filters-smoke.cjs"
   },
   "keywords": [],
-  "author": "Dainius Genzuras",
+  "author": "Seenary Applications",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {

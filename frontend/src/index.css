@@ -381,6 +381,11 @@
   }
 }
 
+@keyframes pull-step-hop {
+  0%, 55%, 100% { transform: translateY(0); }
+  25% { transform: translateY(-4px); }
+}
+
 @keyframes import-activity-bar {
   from {
     transform: translateX(-120%);

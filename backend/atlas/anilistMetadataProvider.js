@@ -1,5 +1,6 @@
 const anilist = require('../anilist');
 const animethemes = require('../animethemes');
+const { searchMedia } = require('../searchOrchestrator');
 
 // Public metadata only. This adapter has no account token or library mutation interface.
 function createAniListMetadataProvider() {
@@ -7,7 +8,7 @@ function createAniListMetadataProvider() {
     people: (type, id, kind, page) => anilist.getMediaPeople(type, id, kind, page),
     details: (type, id) => type === 'ANIME' ? anilist.getAnimeDetails(id, { includeFranchiseStartDate: false }) : anilist.getMangaDetails(id),
     franchiseStartDate: (media, options) => anilist.findAnimeSeriesStartDate(media, options),
-    search: (text, hideAdultContent) => anilist.searchMedia(text, { hideAdultContent }),
+    search: (text, hideAdultContent) => searchMedia(text, { hideAdultContent }),
     discover: (hideAdultContent, mediaType) => anilist.getDiscoverMedia({ hideAdultContent, mediaType }),
     tags: hideAdultContent => anilist.getDiscoverTags(hideAdultContent),
     genres: hideAdultContent => anilist.getDiscoverGenres(hideAdultContent),

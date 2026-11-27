@@ -280,6 +280,7 @@ function createStagingServer(service, providers = null, media = null, library = 
         case 'getProviderAccount':
         case 'refreshProvider':
         case 'requestProviderSync':
+        case 'cancelProviderSync':
         case 'getProviderSyncStatus':
         case 'getSyncActivity':
         case 'excludeSyncEntry':
@@ -293,6 +294,7 @@ function createStagingServer(service, providers = null, media = null, library = 
           const handlers = {
             exportAccountData: () => providers.exportAccount(token), getProviderAccount: () => providers.getLink(token, body.args[0]), refreshProvider: () => providers.refresh(token),
             requestProviderSync: () => providers.requestInboundSync(token, body.args[0]),
+            cancelProviderSync: () => providers.cancelInboundSync(token, body.args[0]),
             getProviderSyncStatus: () => providers.inboundSyncStatus(token, body.args[0]),
             getSyncActivity: () => providers.syncActivity(token),
             excludeSyncEntry: () => providers.setSyncExclusion(token, body.args[0]?.id, true),

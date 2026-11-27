@@ -4,6 +4,12 @@ const { tokenHash, safeUser, normalize } = require('./accounts');
 const { exportAccountData, eraseAccountData } = require('./accountData');
 const fail = (message) => ({ ok: false, message });
 const validProvider = (provider) => ['anilist', 'mal'].includes(provider);
+function pendingPullRequest(state) {
+  const requestedAt = state?.manualRequestedAt;
+  if (!requestedAt) return null;
+  if (state.lastOutcome === 'success' && state.lastSuccessAt && +new Date(state.lastSuccessAt) >= +new Date(requestedAt)) return null;
+  return requestedAt;
+}
 const publicLink = (link) => link ? { provider: link.provider, providerUserId: link.providerUserId,
   username: link.username, linked: true, expiresAt: link.expiresAt, needsReauthorization: Boolean(link.needsReauthorization) } : null;
 
@@ -252,10 +258,14 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
       if (!link) return fail(`No linked ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} account.`);
       const requestedAt = new Date();
       const pending = await repo.providerRefreshStates.findOne({ _id: link._id });
+      if (link.needsReauthorization || (pending?.lastOutcome === 'reauthorization-required' && pending.linkRevision === link.revision)) {
+        return fail('Reconnect the provider before updating your library.');
+      }
+      const manualRequestedAt = pendingPullRequest(pending);
       const isFirstSync = !pending?.lastSuccessAt;
       const active = pending?.leaseUntil && new Date(pending.leaseUntil) > requestedAt;
       const lastManualRetry = pending?.lastManualRetryAt && new Date(pending.lastManualRetryAt).getTime();
-      if (pending?.manualRequestedAt && pending.lastOutcome === 'retry' && !active
+      if (manualRequestedAt && pending.lastOutcome === 'retry' && !active
           && pending.lastErrorStatus !== 429 && (!lastManualRetry || requestedAt.getTime() - lastManualRetry >= 60000)) {
         // A failed manual pull stays queued during backoff. Allow an explicit,
         // throttled retry without taking a live worker's lease or resetting history.
@@ -264,15 +274,37 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
         { $set: { nextAttemptAt: requestedAt, lastManualRetryAt: requestedAt }, $inc: { revision: 1 } });
         if (retried.modifiedCount) return { ok: true, requestedAt: pending.manualRequestedAt, retryQueued: true, isFirstSync };
       }
-      if (pending?.manualRequestedAt || pending?.leaseUntil && new Date(pending.leaseUntil) > requestedAt) {
-        return { ok: true, requestedAt: pending.manualRequestedAt || requestedAt, alreadyQueued: true, isFirstSync };
+      if (manualRequestedAt || active) {
+        return { ok: true, requestedAt: manualRequestedAt || requestedAt, alreadyQueued: true, isFirstSync };
       }
-      await repo.providerRefreshStates.updateOne({ _id: link._id }, {
+      if (new Date(pending?.retryAfterUntil) > requestedAt) {
+        return fail('The provider is limiting requests. Try again later.');
+      }
+      await repo.providerRefreshStates.findOneAndUpdate({ _id: link._id }, {
         $set: { userId: user._id, provider, linkRevision: link.revision,
-          nextAttemptAt: requestedAt, manualRequestedAt: requestedAt },
+          nextAttemptAt: requestedAt, manualRequestedAt: requestedAt, attempts: 0 },
+        $unset: { lastOutcome: '', lastManualRetryAt: '', retryAfterUntil: '' },
         $setOnInsert: { revision: 0 },
-      }, { upsert: true });
+      }, { upsert: true, returnDocument: 'after' });
       return { ok: true, requestedAt, isFirstSync };
+    },
+    async cancelInboundSync(token, provider) {
+      const user = await accounts.getAuthenticatedUser(token);
+      if (!user) return fail('You must be logged in.');
+      if (!validProvider(provider)) return fail('Invalid provider.');
+      const link = await repo.providerAccounts.findOne({ userId: user._id, provider });
+      if (!link) return fail('The provider is no longer linked.');
+      const now = new Date();
+      // Revoking the lease also fences concurrent library writes in apply().
+      const result = await repo.providerRefreshStates.updateOne({
+        _id: link._id, userId: user._id, provider,
+        $or: [{ manualRequestedAt: { $exists: true } }, { leaseUntil: { $gt: now } }],
+      }, {
+        $set: { lastOutcome: 'cancelled', nextAttemptAt: new Date(+now + 6 * 3600000), attempts: 0 },
+        $unset: { manualRequestedAt: '', leaseOwner: '', leaseUntil: '', progress: '', lastErrorCode: '', lastErrorStatus: '', lastErrorPhase: '' },
+        $inc: { revision: 1 },
+      });
+      return { ok: true, cancelled: Boolean(result.modifiedCount) };
     },
     async inboundSyncStatus(token, provider) {
       const user = await accounts.getAuthenticatedUser(token);
@@ -281,18 +313,21 @@ function createProviderService({ client, repo, accounts, cipher, adapters }) {
       const link = await repo.providerAccounts.findOne({ userId: user._id, provider });
       if (!link) return fail(`No linked ${provider === 'anilist' ? 'AniList' : 'MyAnimeList'} account.`);
       const state = await repo.providerRefreshStates.findOne({ _id: link._id });
+      const requestedAt = pendingPullRequest(state);
+      const running = Boolean(state?.leaseUntil && new Date(state.leaseUntil) > new Date());
       return { ok: true, sync: state ? {
-        running: Boolean(state.leaseUntil && new Date(state.leaseUntil) > new Date()),
-        requestedAt: state.manualRequestedAt || null,
+        running,
+        requestedAt,
         lastSuccessAt: state.lastSuccessAt || null,
-        lastOutcome: state.lastOutcome || null,
+        lastOutcome: state.lastOutcome === 'reauthorization-required' && !link.needsReauthorization && state.linkRevision !== link.revision
+          ? null : state.lastOutcome || null,
         lastErrorCode: /^[A-Z][A-Z0-9_]{0,63}$/.test(state.lastErrorCode || '') ? state.lastErrorCode : null,
         lastErrorStatus: Number.isInteger(state.lastErrorStatus) && state.lastErrorStatus >= 400 && state.lastErrorStatus <= 599 ? state.lastErrorStatus : null,
         lastErrorPhase: ['authorization', 'fetch-anime', 'fetch-manga', 'normalize-anime', 'normalize-manga', 'hydrate', 'mapping', 'reconcile', 'finish'].includes(state.lastErrorPhase) ? state.lastErrorPhase : null,
         nextAttemptAt: state.nextAttemptAt || null,
         attempts: state.attempts || 0,
         counts: state.lastCounts || null,
-        progress: state.progress || (state.manualRequestedAt ? { stage: 'queued', current: 0, total: null } : null),
+        progress: (running && state.progress) || (requestedAt ? { stage: 'queued', current: 0, total: null } : null),
       } : null };
     },
     async syncActivity(token) {

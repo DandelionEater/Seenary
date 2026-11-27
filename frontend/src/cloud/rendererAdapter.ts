@@ -1,4 +1,4 @@
-import { providerProgress } from '../utils/providerProgress';
+import { completedProviderProgress, providerProgress, type PullStatus } from '../utils/providerProgress';
 import { localStore } from '../localStore';
 import { createDetailCache } from '../utils/detailCache';
 import type { AnimeMedia, AnimeThemeMusicItem, PersonDetails, SaveListEntryPayload } from '../types/domain';
@@ -27,6 +27,7 @@ type AccountReply = Omit<Reply, 'user'> & {
   settings?: { autoSyncEnabled: boolean; analyticsConsentDecided?: boolean; analyticsEnabled?: boolean };
   requestedAt?: string;
   alreadyQueued?: boolean;
+  cancelled?: boolean;
   isFirstSync?: boolean;
   sync?: {
     running: boolean;
@@ -39,7 +40,7 @@ type AccountReply = Omit<Reply, 'user'> & {
     nextAttemptAt?: string | null;
     attempts?: number;
     counts: { applied?: number; skipped?: number; review?: number } | null;
-    progress?: { stage: string; current: number; total: number | null } | null;
+    progress?: PullStatus['progress'];
   } | null;
 };
 type ImportItem = SaveListEntryPayload & { animeId: number; mangaId?: number; mediaType?: 'ANIME' | 'MANGA'; media?: AnimeMedia; title?: AnimeMedia['title']; isRepeating?: boolean };
@@ -59,7 +60,14 @@ export function installAtlasRenderer(legacy: Api) {
   const listeners = new Set<(result: unknown) => void>();
   const progressListeners = new Set<(result: unknown) => void>();
   const savedProgress = new Map<string, Record<string, unknown>>();
-  function emitProgress(progress: Record<string, unknown>) { savedProgress.set(String(progress.operation), progress); progressListeners.forEach(listener => listener(progress)); }
+  function emitProgress(progress: Record<string, unknown>) {
+    const operation = String(progress.operation);
+    savedProgress.set(operation, progress);
+    progressListeners.forEach(listener => listener(progress));
+    if (progress.stage === 'complete' || progress.stage === 'cancelled') window.setTimeout(() => {
+      if (savedProgress.get(operation) === progress) savedProgress.delete(operation);
+    }, 6000);
+  }
   let syncRunning = false;
   let pendingUploadTimer: number | null = null;
   let lastRequest = 0;
@@ -261,7 +269,7 @@ export function installAtlasRenderer(legacy: Api) {
       title_preferred: media.metadata.title_preferred || media.metadata.title_english || media.metadata.title_romaji || `${media.anilistId ? 'AniList' : 'MAL'} #${Math.abs(numericId(media))}`,
       external_ids: { anilist: media.anilistId ?? null, mal: media.malId ?? null },
       cloud_pending: Boolean(pending), cloud_conflict: pending?.error ?? null, cloud_operation_id: pending?.request.operationId ?? null,
-      cloud_action: pending?.request.action ?? null, cloud_current: pending?.current ?? null };
+      cloud_action: pending?.request.action ?? null, cloud_current: pending?.current };
   }
   function overlay(state: State) {
     const entries = { ...state.entries };
@@ -283,19 +291,40 @@ export function installAtlasRenderer(legacy: Api) {
     const media = Object.values(state.media).find(media => media.type === type && numericId(media) === id);
     const found = media && overlay(state)[media._id];
     seenRevisions.set(`${type}:${id}`, found?.revision ?? 0);
-    return { ok: true, entry: found && !found.deleted ? row(found, state) : null };
+    const hasConflict = media && state.pending.some(item => item.request.mediaId === media._id && item.error);
+    return { ok: true, entry: found && (!found.deleted || hasConflict) ? row(found, state) : null };
   }
   async function resolveConflict(type: Entry['type'], id: number, choice: 'cloud' | 'device') {
     try {
       return await operate(async client => {
         const state = await client.read();
         const media = Object.values(state.media).find(item => item.type === type && numericId(item) === id);
-        const pending = media && state.pending.find(item => item.request.mediaId === media._id && item.error);
-        if (!media || !pending) return { ok: false, message: 'This title no longer has a cloud conflict.' };
-        await client.resolve(pending.request.operationId, choice);
-        if (choice === 'device') await client.flush();
+        if (!media) return { ok: false, message: 'This title could not be found on this device.' };
+        const pending = state.pending.find(item => item.request.mediaId === media._id && item.error);
+        if (!pending) {
+          const found = overlay(state)[media._id];
+          return { ok: true, message: 'This title no longer has a cloud conflict.',
+            entry: found && !found.deleted ? row(found, state) : null };
+        }
+        let retryId: string | undefined;
+        try {
+          retryId = await client.resolve(pending.request.operationId, choice);
+        } catch (error) {
+          const updated = await client.read();
+          return { ok: false, message: error instanceof Error ? error.message : 'Conflict resolution failed.',
+            entry: row(overlay(updated)[media._id], updated) };
+        }
+        if (retryId) {
+          try { await client.flush(retryId); } catch { schedulePendingUpload(); }
+        }
+        seenRevisions.delete(`${type}:${id}`);
         refreshNeeded = true; notify();
         const updated = await client.read(); const found = overlay(updated)[media._id];
+        const retry = updated.pending.find(item => item.request.operationId === retryId);
+        if (retry?.error) return { ok: false, message: 'Atlas did not accept the edit. Review the versions and try again.',
+          entry: row(found, updated) };
+        if (retry) return { ok: true, message: 'Your edit is saved on this device and waiting for Atlas.',
+          entry: found && !found.deleted ? row(found, updated) : null };
         return { ok: true, message: choice === 'device' ? 'Your edit was applied to the latest cloud version.' : 'The cloud version was kept.',
           entry: found && !found.deleted ? row(found, updated) : null };
       });
@@ -312,6 +341,11 @@ export function installAtlasRenderer(legacy: Api) {
           media = reply.media as Media;
           state.media[media._id] = media; await storage.write(client.userId, state);
         }
+        const pending = state.pending.find(item => item.request.mediaId === media._id);
+        if (pending) return { ok: false, message: pending.error
+          ? 'Review the earlier Atlas edit before saving this title.'
+          : 'An earlier edit is waiting for Atlas. Try again after it syncs.',
+          entry: row(overlay(state)[media._id], state) };
         const patch = fields(data as Partial<Fields>);
         if (data.isRewatching !== undefined || data.isRereading !== undefined) patch.isRepeating = Boolean(data.isRewatching ?? data.isRereading);
         if (data.score === '') patch.score = null;
@@ -417,13 +451,22 @@ export function installAtlasRenderer(legacy: Api) {
   async function syncStatus() {
     const result = await rpc('getAccountSettings', [], user?.id);
     const [anilist, mal] = await Promise.all([rpc('getProviderAccount', ['anilist'], user?.id), rpc('getProviderAccount', ['mal'], user?.id)]);
+    const lastSuccessfulPulls: Partial<Record<'anilist' | 'mal', string>> = {};
     for (const link of [anilist.account, mal.account]) {
       if (!link) continue;
       try {
-        const pull = await rpc('getProviderSyncStatus', [link.provider], user?.id);
+        const accountId = user?.id;
+        const pull = await rpc('getProviderSyncStatus', [link.provider], accountId);
+        if (user?.id === accountId && pull.sync?.lastSuccessAt) {
+          lastSuccessfulPulls[link.provider as 'anilist' | 'mal'] = pull.sync.lastSuccessAt;
+        }
+        if (user?.id !== accountId || watchedProviderPulls.has(`${accountId}:${link.provider}`)) continue;
         const progress = pull.sync && providerProgress(link.provider, pull.sync);
-        if (progress) emitProgress(progress);
-        if (pull.sync?.requestedAt) { const at = Date.parse(pull.sync.requestedAt); if (Number.isFinite(at)) void watchProviderPull(link.provider, at); }
+        if (progress && progress.stage !== 'cancelled') emitProgress(progress);
+        if (progress?.stage !== 'complete' && (pull.sync?.requestedAt || pull.sync?.running)) {
+          const at = pull.sync.requestedAt ? Date.parse(pull.sync.requestedAt) : Date.now();
+          if (Number.isFinite(at)) void watchProviderPull(link.provider, at);
+        }
       } catch { recordDiagnosticError('sync-status', 'SYNC_STATUS_UNAVAILABLE'); }
     }
     const primary = anilist.account ?? mal.account;
@@ -433,60 +476,92 @@ export function installAtlasRenderer(legacy: Api) {
       providerLabel: primary?.provider === 'mal' ? 'MyAnimeList' : primary ? 'AniList' : null,
       syncTargetsLabel: labels.join(' and ') || null,
       autoSyncEnabled: result.settings?.autoSyncEnabled ?? false, pendingCount: (await load()).pending.length,
-      message: 'Cloud edits are queued separately from provider delivery.' };
+      lastSuccessfulPulls, message: 'Cloud edits are queued separately from provider delivery.' };
   }
-  const watchedProviderPulls = new Set<string>();
+  const watchedProviderPulls = new Map<string, symbol>();
   async function watchProviderPull(provider: 'anilist' | 'mal', requestedAt: number) {
     const accountId = user?.id;
     if (!accountId) return;
     const watchKey = `${accountId}:${provider}`;
     if (watchedProviderPulls.has(watchKey)) return;
-    watchedProviderPulls.add(watchKey);
+    const watcher = Symbol();
+    watchedProviderPulls.set(watchKey, watcher);
+    const isCurrent = () => user?.id === accountId && watchedProviderPulls.get(watchKey) === watcher;
     const operation = provider === 'anilist' ? 'pull-anilist' : 'pull-mal';
     try {
       let pollInterval = 3000;
-      while (user?.id === accountId) {
+      while (isCurrent()) {
         await new Promise(resolve => setTimeout(resolve, pollInterval));
-        if (user?.id !== accountId) return;
+        if (!isCurrent()) return;
         const status = await rpc('getProviderSyncStatus', [provider], accountId);
-        if (user?.id !== accountId) return;
-        const progress = status.sync && providerProgress(provider, status.sync);
-        if (progress) emitProgress(progress);
-        const nextAttempt = Date.parse(String(status.sync?.nextAttemptAt || ''));
-        pollInterval = status.sync?.running ? 3000 : Number.isFinite(nextAttempt) ? Math.max(3000, Math.min(30000, nextAttempt - Date.now())) : 5000;
-        const completedAt = Date.parse(String(status.sync?.lastSuccessAt || ''));
-        if (Number.isFinite(completedAt) && completedAt >= requestedAt) {
-          refreshNeeded = true;
-          await load(true);
-          const counts = status.sync?.counts;
-          const label = provider === 'anilist' ? 'AniList' : 'MyAnimeList';
-          notify({ ok: true, provider: label,
-            message: `${label} update complete. ${counts?.applied ?? 0} entries were added or updated; ${counts?.skipped ?? 0} were already current.` });
-          const total = (counts?.applied ?? 0) + (counts?.skipped ?? 0);
-          emitProgress({ operation, stage: 'complete', label: `${label} update complete.`, current: total, total });
+        if (!isCurrent()) return;
+        if (!status.ok || !status.sync) {
+          emitProgress({ operation, stage: 'failed', label: status.message || 'The update is no longer queued. Try starting it again.' });
           return;
         }
-        if (status.sync?.lastOutcome === 'reauthorization-required') {
-          emitProgress({ operation, stage: 'failed', label: 'Provider authorization must be renewed.' });
+        const complete = completedProviderProgress(provider, status.sync, requestedAt);
+        if (complete) {
+          refreshNeeded = true;
+          const label = provider === 'anilist' ? 'AniList' : 'MyAnimeList';
+          emitProgress(complete);
+          void load(true).then(() => {
+            if (user?.id === accountId) notify({ ok: true, provider: label, message: complete.label });
+          }).catch(() => {
+            if (user?.id !== accountId) return;
+            recordDiagnosticError('library-refresh', 'LIBRARY_REFRESH_FAILED');
+            emitProgress({ ...complete, label: `${complete.label} The library on this device could not refresh yet.` });
+            notify();
+          });
+          return;
+        }
+        const progress = providerProgress(provider, status.sync);
+        if (progress) emitProgress(progress);
+        const nextAttempt = Date.parse(String(status.sync.nextAttemptAt || ''));
+        pollInterval = status.sync.running ? 3000 : Number.isFinite(nextAttempt) ? Math.max(3000, Math.min(30000, nextAttempt - Date.now())) : 5000;
+        if (progress?.stage === 'failed' || progress?.stage === 'cancelled') return;
+        if (!status.sync.running && !status.sync.requestedAt && !progress) {
+          emitProgress({ operation, stage: 'failed', label: 'The update ended before completing. Try starting it again.' });
           return;
         }
       }
     } catch {
-      if (user?.id === accountId) emitProgress({ operation, stage: 'failed', label: 'Could not check the update. Your library is preserved; retry when connected.' });
+      if (isCurrent()) emitProgress({ operation, stage: 'failed', label: 'Could not check the update. Retry when connected.' });
     }
-    finally { watchedProviderPulls.delete(watchKey); }
+    finally { if (watchedProviderPulls.get(watchKey) === watcher) watchedProviderPulls.delete(watchKey); }
   }
   async function pullProvider(provider: 'anilist' | 'mal') {
-    const queued = await rpc('requestProviderSync', [provider], user?.id);
+    const accountId = user?.id;
+    const queued = await rpc('requestProviderSync', [provider], accountId);
+    if (user?.id !== accountId) return { ok: false, message: 'The active account changed.' };
     if (!queued.ok) return queued;
     const requestedAt = Date.parse(String(queued.requestedAt));
-    if (Number.isFinite(requestedAt)) void watchProviderPull(provider, requestedAt);
+    if (!Number.isFinite(requestedAt)) return { ok: false, message: 'Could not confirm the queued update. Check sync status before trying again.' };
+    if (!queued.alreadyQueued) {
+      const progress = providerProgress(provider, { requestedAt: String(queued.requestedAt) });
+      if (progress) emitProgress(progress);
+    }
+    void watchProviderPull(provider, requestedAt);
     const label = provider === 'anilist' ? 'AniList' : 'MyAnimeList';
     return { ok: true, queued: true, message: queued.alreadyQueued
       ? `${label} update is already running in the background.`
       : queued.isFirstSync
         ? `${label} update started in the background. The first reconciliation may take several minutes.`
         : `${label} update started in the background.` };
+  }
+  async function cancelProviderPull(provider: 'anilist' | 'mal') {
+    const accountId = user?.id;
+    const result = await rpc('cancelProviderSync', [provider], accountId);
+    if (user?.id !== accountId) return { ok: false, message: 'The active account changed.' };
+    if (result.ok && result.cancelled) {
+      watchedProviderPulls.delete(`${accountId}:${provider}`);
+      const progress = providerProgress(provider, { lastOutcome: 'cancelled' });
+      if (progress) emitProgress(progress);
+      refreshNeeded = true;
+      void load(true).then(() => { if (user?.id === accountId) notify(); }).catch(() => {
+        if (user?.id === accountId) recordDiagnosticError('library-refresh', 'LIBRARY_REFRESH_FAILED');
+      });
+    }
+    return { ok: result.ok, cancelled: result.cancelled, message: result.message };
   }
   async function previewImport(username: string, provider: 'anilist' | 'mal' = 'anilist') {
     const id = user?.id;
@@ -646,6 +721,7 @@ export function installAtlasRenderer(legacy: Api) {
     runSyncNow: sync,
     pullFromAniList: () => pullProvider('anilist'),
     pullFromMal: () => pullProvider('mal'),
+    cancelProviderPull,
     onAutoSyncComplete: (callback: (result: unknown) => void) => { listeners.add(callback); return () => listeners.delete(callback); },
     onSyncProgress: (callback: (result: unknown) => void) => { progressListeners.add(callback); const timer = window.setTimeout(() => { for (const progress of savedProgress.values()) if (progressListeners.has(callback)) callback(progress); }, 0); return () => { window.clearTimeout(timer); progressListeners.delete(callback); }; },
     getSyncActivity: () => rpc('getSyncActivity', [], user?.id),

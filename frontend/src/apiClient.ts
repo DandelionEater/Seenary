@@ -1,4 +1,5 @@
 import { DEFAULT_LOCAL_SETTINGS, localStore } from "./localStore";
+import { readTitleLanguage } from "./utils/titlePreference";
 import type { AuthImportResult } from "./types/domain";
 
 type ApiClient = typeof window.api;
@@ -781,7 +782,7 @@ export function installApiClient() {
     },
     getSettings: async () => {
       const userId = await getActiveUserId();
-      return userId ? await localStore.getSettings(userId) : DEFAULT_LOCAL_SETTINGS;
+      return userId ? await localStore.getSettings(userId) : { ...DEFAULT_LOCAL_SETTINGS, titleLanguage: readTitleLanguage() };
     },
     updateSettings: async (settings) => {
       const userId = await requireActiveUserId();

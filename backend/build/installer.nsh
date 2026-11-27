@@ -48,7 +48,34 @@ Var /GLOBAL seenaryCurrentUserInstallDir
 !macroend
 !endif
 
+; Electron originally used its default identifier for Seenary's login item.
+; Only remove it when the command belongs to a known Seenary installation:
+; another Electron app may still own the same generic registry value name.
+!macro removeLegacySeenaryStartup ROOT INSTALL_DIR
+  ${if} "${INSTALL_DIR}" != ""
+    ReadRegStr $R0 ${ROOT} "Software\Microsoft\Windows\CurrentVersion\Run" "electron.app.Electron"
+    ${if} $R0 == '$\"${INSTALL_DIR}\${APP_EXECUTABLE_FILENAME}$\"'
+    ${orIf} $R0 == '${INSTALL_DIR}\${APP_EXECUTABLE_FILENAME}'
+      DeleteRegValue ${ROOT} "Software\Microsoft\Windows\CurrentVersion\Run" "electron.app.Electron"
+    ${endif}
+  ${endif}
+!macroend
+
+!macro cleanupLegacySeenaryStartup
+  Push $R0
+  !insertmacro removeLegacySeenaryStartup HKCU "$INSTDIR"
+  !insertmacro removeLegacySeenaryStartup HKCU "$seenaryCurrentUserInstallDir"
+  !insertmacro removeLegacySeenaryStartup HKCU "$seenaryMachineInstallDir"
+  ${if} $installMode == "all"
+    !insertmacro removeLegacySeenaryStartup HKLM "$INSTDIR"
+    !insertmacro removeLegacySeenaryStartup HKLM "$seenaryCurrentUserInstallDir"
+    !insertmacro removeLegacySeenaryStartup HKLM "$seenaryMachineInstallDir"
+  ${endif}
+  Pop $R0
+!macroend
+
 !macro customInstall
+  !insertmacro cleanupLegacySeenaryStartup
   Rename "$INSTDIR\${UNINSTALL_FILENAME}" "$INSTDIR\.seenary-uninstall-core.exe"
   File /oname=SeenaryUninstaller.exe "${BUILD_RESOURCES_DIR}\SeenaryUninstaller.exe"
   Rename "$INSTDIR\SeenaryUninstaller.exe" "$INSTDIR\${UNINSTALL_FILENAME}"

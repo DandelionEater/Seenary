@@ -24,7 +24,7 @@ export function MediaCard({
   onEditEntry,
   titleLanguage,
 }: MediaCardProps) {
-  const title = getPreferredTitle(media.title, titleLanguage);
+  const title = getPreferredTitle(media.title, titleLanguage, media.synonyms);
   const isManga = media.type === "MANGA";
 
   const subtitleParts = [

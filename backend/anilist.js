@@ -567,6 +567,7 @@ async function getDiscoverMedia(options = {}) {
     fragment DiscoverMedia on Media {
       id
       isAdult
+      synonyms
       title {
         romaji
         english
@@ -692,7 +693,7 @@ const filteredBrowse = createFilteredBrowsePager(async (streams, type, safe) => 
   const clauses = streams.map((stream,index) => {
     const fields = {page:'Int',genre:'String',tag:'String',genres:'[String]',tags:'[String]',season:'MediaSeason',seasonYear:'Int',startDate:'String',status:'MediaStatus'};
     for (const [name,kind] of Object.entries(fields)) { declarations.push('$'+name+index+': '+kind);variables[name+index]=Array.isArray(stream[name]) && !stream[name].length ? undefined : stream[name]; }
-    return 's'+index+': Page(page: $page'+index+', perPage: 50) { pageInfo { hasNextPage } media(type: $type, isAdult: $safe, sort: [POPULARITY_DESC, ID], genre: $genre'+index+', tag: $tag'+index+', genre_in: $genres'+index+', tag_in: $tags'+index+', season: $season'+index+', seasonYear: $seasonYear'+index+', startDate_like: $startDate'+index+', status: $status'+index+') { id type isAdult popularity status genres tags { name } startDate { year } title { romaji english native userPreferred } coverImage { large } episodes chapters volumes format season seasonYear averageScore meanScore } }';
+    return 's'+index+': Page(page: $page'+index+', perPage: 50) { pageInfo { hasNextPage } media(type: $type, isAdult: $safe, sort: [POPULARITY_DESC, ID], genre: $genre'+index+', tag: $tag'+index+', genre_in: $genres'+index+', tag_in: $tags'+index+', season: $season'+index+', seasonYear: $seasonYear'+index+', startDate_like: $startDate'+index+', status: $status'+index+') { id type isAdult popularity status genres tags { name } startDate { year } title { romaji english native userPreferred } synonyms coverImage { large } episodes chapters volumes format season seasonYear averageScore meanScore } }';
   });
   const response = await anilistRequestWithRetry('query ('+declarations.join(', ')+') { '+clauses.join(' ')+' }', variables);
   return streams.map((_,index)=>response.data['s'+index]);
@@ -855,6 +856,7 @@ async function fetchDiscoverShelfPage(definition, { page, perPage, hideAdultCont
         ) {
           id
           isAdult
+          synonyms
           title {
             romaji
             english
@@ -1251,7 +1253,7 @@ async function getViewer(accessToken) {
   return data.data.Viewer;
 }
 
-async function getViewerMediaCollection(accessToken, userId, mediaType) {
+async function getViewerMediaCollection(accessToken, userId, mediaType, { attempts = 2 } = {}) {
   const query = `
     query ($userId: Int, $type: MediaType) {
       MediaListCollection(
@@ -1350,7 +1352,7 @@ async function getViewerMediaCollection(accessToken, userId, mediaType) {
     query,
     { userId, type: mediaType === 'MANGA' ? 'MANGA' : 'ANIME' },
     accessToken,
-    2
+    attempts
   );
 
   if (!data?.data?.MediaListCollection) {
@@ -1360,12 +1362,12 @@ async function getViewerMediaCollection(accessToken, userId, mediaType) {
   return data.data.MediaListCollection;
 }
 
-async function getViewerAnimeCollection(accessToken, userId) {
-  return await getViewerMediaCollection(accessToken, userId, 'ANIME');
+async function getViewerAnimeCollection(accessToken, userId, options) {
+  return await getViewerMediaCollection(accessToken, userId, 'ANIME', options);
 }
 
-async function getViewerMangaCollection(accessToken, userId) {
-  return await getViewerMediaCollection(accessToken, userId, 'MANGA');
+async function getViewerMangaCollection(accessToken, userId, options) {
+  return await getViewerMediaCollection(accessToken, userId, 'MANGA', options);
 }
 
 async function getAnimeDetails(id, options = {}) {
@@ -1598,7 +1600,7 @@ async function getMangaDetailsByMalId(idMal) {
   return await fetchMangaDetails({ idMal });
 }
 
-async function getMediaByMalIds(malIds, mediaType = 'ANIME') {
+async function getMediaByMalIds(malIds, mediaType = 'ANIME', { attempts = 3 } = {}) {
   const ids = [...new Set((malIds || []).map(Number))].filter(
     (id) => Number.isInteger(id) && id > 0
   );
@@ -1642,7 +1644,7 @@ async function getMediaByMalIds(malIds, mediaType = 'ANIME') {
         }
       }
     `;
-    const data = await anilistRequestWithRetry(query, { ids: batch });
+    const data = await anilistRequestWithRetry(query, { ids: batch }, null, attempts);
     results.push(...(data?.data?.Page?.media ?? []));
   }
 

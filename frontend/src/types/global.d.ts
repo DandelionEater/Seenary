@@ -109,7 +109,7 @@ type SyncActivityItem = {
 
 type SyncProgressEvent = {
   operation: "manual-sync" | "pull-anilist" | "pull-mal";
-  stage: "waiting-retry" | "queued" | "starting" | "fetching" | "hydrating" | "mapping" | "reconciling" | "saving" | "processing" | "complete" | "failed";
+  stage: "waiting-retry" | "queued" | "starting" | "fetching" | "hydrating" | "mapping" | "reconciling" | "saving" | "processing" | "complete" | "failed" | "cancelled";
   label: string;
   current?: number | null;
   total?: number | null;
@@ -117,6 +117,8 @@ type SyncProgressEvent = {
   retryAt?: string | null;
   retryAllowed?: boolean;
   errorCode?: string | null;
+  fetched?: Partial<Record<"ANIME" | "MANGA", number>>;
+  cancellable?: boolean;
 };
 
 declare global {
@@ -414,6 +416,7 @@ declare global {
         syncTargetsLabel?: string | null;
         autoSyncEnabled?: boolean;
         pendingCount?: number;
+        lastSuccessfulPulls?: Partial<Record<"anilist" | "mal", string>>;
       }>;
       setAutoSync: (enabled: boolean) => Promise<{
         ok: boolean;
@@ -436,6 +439,7 @@ declare global {
       }>;
       pullFromAniList: () => Promise<ImportPayload & {
         ok: boolean;
+        queued?: boolean;
         partial?: boolean;
         message: string;
         summary?: {
@@ -451,6 +455,7 @@ declare global {
       }>;
       pullFromMal: () => Promise<ImportPayload & {
         ok: boolean;
+        queued?: boolean;
         partial?: boolean;
         message: string;
         summary?: {
@@ -466,6 +471,7 @@ declare global {
           unmapped?: number;
         };
       }>;
+      cancelProviderPull?: (provider: "anilist" | "mal") => Promise<{ ok: boolean; cancelled?: boolean; message?: string }>;
       onSyncProgress: (callback: (progress: SyncProgressEvent) => void) => () => void;
       onAutoSyncComplete: (callback: (result: AutoSyncCompleteEvent) => void) => () => void;
       getSyncActivity: () => Promise<{
@@ -705,6 +711,7 @@ declare global {
       removeMyListEntry: (animeId: number) => Promise<{
         ok: boolean;
         message: string;
+        entry?: TrackedAnimeEntry;
       }>;
       resolveMyListConflict: (animeId: number, choice: "cloud" | "device") => Promise<{
         ok: boolean;
@@ -747,6 +754,7 @@ declare global {
       removeMyMangaListEntry: (mangaId: number) => Promise<{
         ok: boolean;
         message: string;
+        entry?: TrackedMangaEntry;
       }>;
       resolveMyMangaListConflict: (mangaId: number, choice: "cloud" | "device") => Promise<{
         ok: boolean;

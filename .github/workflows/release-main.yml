@@ -128,10 +128,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download v0.2.4-beta --repo "$env:GITHUB_REPOSITORY" --pattern "Seenary-Setup-0.2.4-beta.exe" --dir backend/node_modules/.cache/previous-release
+          gh release download v0.2.5-beta --repo "$env:GITHUB_REPOSITORY" --pattern "Seenary-Setup-0.2.5-beta.exe" --dir backend/node_modules/.cache/previous-release
 
       - name: Verify actual fresh installation and upgrade startup
-        run: node scripts/installed-startup-smoke.cjs node_modules/.cache/previous-release/Seenary-Setup-0.2.4-beta.exe
+        run: node scripts/installed-startup-smoke.cjs node_modules/.cache/previous-release/Seenary-Setup-0.2.5-beta.exe
         working-directory: backend
 
       - name: Upload installer startup reports

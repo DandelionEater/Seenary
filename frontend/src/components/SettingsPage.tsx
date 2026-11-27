@@ -2,6 +2,7 @@ import { RecommendationPreferences } from './RecommendationPreferences';
 import type { ReleaseReminderGroups } from '../utils/releaseReminderSettings';
 import { RecoveryEmail } from './RecoveryEmail';
 import { PasswordSettings } from './PasswordSettings';
+import { ProviderPullSteps } from './ProviderPullSteps';
 import { exportDiagnostics } from '../utils/diagnostics';
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ComponentType, type ReactNode, type SVGProps } from "react";
 import {
@@ -275,6 +276,7 @@ type SettingsPageProps = {
   }>;
   onPullFromAniList: () => Promise<{
     ok: boolean;
+    queued?: boolean;
     message: string;
     summary?: {
       sourceUsername: string;
@@ -287,6 +289,7 @@ type SettingsPageProps = {
   }>;
   onPullFromMal: () => Promise<{
     ok: boolean;
+    queued?: boolean;
     message: string;
     summary?: {
       sourceUsername: string;
@@ -360,7 +363,7 @@ type SyncActivityItem = {
 };
 type SyncProgressEvent = {
   operation: "manual-sync" | "pull-anilist" | "pull-mal";
-  stage: "waiting-retry" | "queued" | "starting" | "fetching" | "hydrating" | "mapping" | "reconciling" | "saving" | "processing" | "complete" | "failed";
+  stage: "waiting-retry" | "queued" | "starting" | "fetching" | "hydrating" | "mapping" | "reconciling" | "saving" | "processing" | "complete" | "failed" | "cancelled";
   label: string;
   current?: number | null;
   total?: number | null;
@@ -368,6 +371,8 @@ type SyncProgressEvent = {
   retryAt?: string | null;
   retryAllowed?: boolean;
   errorCode?: string | null;
+  fetched?: Partial<Record<"ANIME" | "MANGA", number>>;
+  cancellable?: boolean;
 };
 
 const THEME_OPTIONS: Array<{
@@ -822,10 +827,14 @@ export function SettingsPage({
     syncTargetsLabel: null as string | null,
     autoSyncEnabled: true,
     pendingCount: 0,
+    lastSuccessfulPulls: {} as Partial<Record<"anilist" | "mal", string>>,
     feedback: null as { kind: "success" | "error"; message: string } | null,
   });
   const [isSyncing, setIsSyncing] = useState(false);
   const [pullingProvider, setPullingProvider] = useState<"anilist" | "mal" | null>(null);
+  const [startingPull, setStartingPull] = useState(false);
+  const [cancellingPull, setCancellingPull] = useState<"anilist" | "mal" | null>(null);
+  const [pullCancelError, setPullCancelError] = useState<{ provider: "anilist" | "mal"; message: string } | null>(null);
   const [autoSyncPending, setAutoSyncPending] = useState<boolean | null>(null);
   const autoSyncRequestRef = useRef(false);
   const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(null);
@@ -1074,25 +1083,39 @@ export function SettingsPage({
       setSyncProgress(progress);
       setProviderPullProgress(current => ({ ...current, [progress.operation]: progress }));
       if (progress.operation === "pull-anilist" || progress.operation === "pull-mal") {
-        setPullingProvider(["complete", "failed", "waiting-retry"].includes(progress.stage)
-          ? null
-          : progress.operation === "pull-mal" ? "mal" : "anilist");
+        const provider = progress.operation === "pull-mal" ? "mal" : "anilist";
+        setPullingProvider((current) => ["complete", "failed", "waiting-retry", "cancelled"].includes(progress.stage)
+          ? current === provider ? null : current
+          : provider);
         if (progress.stage === "complete") {
           const message = progress.label;
           setSyncStatus((current) => ({
             ...current,
+            lastSuccessfulPulls: progress.updatedAt
+              ? { ...current.lastSuccessfulPulls, [provider]: progress.updatedAt }
+              : current.lastSuccessfulPulls,
             feedback: { kind: "success", message },
           }));
+        }
+        if (progress.stage === "complete" || progress.stage === "cancelled") {
           window.setTimeout(() => {
             setSyncProgress((current) =>
-              current?.operation === progress.operation && current.stage === "complete" ? null : current
+              current === progress ? null : current
             );
-            setSyncStatus((current) => ({
-              ...current,
-              feedback: current.feedback?.kind === "success" && current.feedback.message === message
-                ? null
-                : current.feedback,
-            }));
+            setProviderPullProgress((current) => {
+              if (current[progress.operation] !== progress) return current;
+              const next = { ...current };
+              delete next[progress.operation];
+              return next;
+            });
+            if (progress.stage === "complete") {
+              setSyncStatus((current) => ({
+                ...current,
+                feedback: current.feedback?.kind === "success" && current.feedback.message === progress.label
+                  ? null
+                  : current.feedback,
+              }));
+            }
           }, 6000);
         }
       }
@@ -1633,6 +1656,7 @@ export function SettingsPage({
         syncTargetsLabel: result.syncTargetsLabel ?? null,
         autoSyncEnabled: result.autoSyncEnabled ?? true,
         pendingCount: result.pendingCount ?? 0,
+        lastSuccessfulPulls: { ...current.lastSuccessfulPulls, ...result.lastSuccessfulPulls },
         feedback: result.ok
           ? current.feedback
           : { kind: "error", message: result.message || "Failed to load sync status." },
@@ -1825,12 +1849,15 @@ export function SettingsPage({
     const providerLabel = provider === "mal" ? "MyAnimeList" : "AniList";
 
     try {
+      setStartingPull(true);
+      setPullCancelError(null);
       setPullingProvider(provider);
       setProviderPullProgress((current) => { const next = { ...current }; delete next[operation]; return next; });
       setSyncProgress({
         operation,
-        stage: "fetching",
+        stage: "starting",
         label: `Preparing ${providerLabel} update...`,
+        cancellable: true,
         current: 0,
         total: null,
       });
@@ -1838,9 +1865,16 @@ export function SettingsPage({
         provider === "mal"
           ? await onPullFromMal()
           : await onPullFromAniList();
-      if (!result.ok) {
-        setPullingProvider(null);
-        setSyncProgress(null);
+      setStartingPull(false);
+      if (!result.ok || !result.queued) {
+        const finished: SyncProgressEvent = {
+          operation,
+          stage: result.ok ? "complete" : "failed",
+          label: result.message,
+        };
+        setPullingProvider((current) => current === provider ? null : current);
+        setSyncProgress(finished);
+        setProviderPullProgress((current) => ({ ...current, [operation]: finished }));
       }
       await loadSyncStatus();
 
@@ -1856,11 +1890,28 @@ export function SettingsPage({
         await loadSyncActivity(syncActivityTab);
       }
     } catch {
+      setStartingPull(false);
       setPullingProvider(null);
       const failure: SyncProgressEvent = { operation, stage: "failed", label: `Could not start the ${providerLabel} update. Retry when connected.` };
       setSyncProgress(failure);
       setProviderPullProgress((current) => ({ ...current, [operation]: failure }));
       setSyncStatus((current) => ({ ...current, feedback: { kind: "error", message: failure.label } }));
+    }
+  }
+
+  async function cancelPull(provider: "anilist" | "mal") {
+    if (!window.api.cancelProviderPull) return;
+    setCancellingPull(provider);
+    setPullCancelError(null);
+    try {
+      const result = await window.api.cancelProviderPull(provider);
+      if (!result.ok) throw new Error(result.message);
+      if (!result.cancelled) await loadSyncStatus();
+    } catch (error) {
+      setPullCancelError({ provider, message: error instanceof Error && error.message
+        ? error.message : "Could not cancel the update. Try again." });
+    } finally {
+      setCancellingPull(null);
     }
   }
 
@@ -3646,8 +3697,8 @@ export function SettingsPage({
               <div>
                 <SectionHeading
                   icon={LanguageIcon}
-                  title="Anime title language"
-                  description="Choose which title version should be preferred throughout the app."
+                  title="Preferred title language"
+                  description="Choose how anime and manga titles appear throughout the app on this device."
                 />
 
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -4242,9 +4293,14 @@ export function SettingsPage({
                   const progress = providerPullProgress[operation] ?? (syncProgress?.operation === operation ? syncProgress : null);
                   const waitingRetry = progress?.stage === "waiting-retry";
                   const failed = progress?.stage === "failed";
-                  const active = pullingProvider === provider && !waitingRetry && !failed;
-                  return <div key={provider ?? "unlinked"} className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex min-w-0 items-center gap-3">
+                  const active = Boolean(progress && !["waiting-retry", "failed", "complete", "cancelled"].includes(progress.stage));
+                  const canCancel = Boolean(provider && window.api.cancelProviderPull && progress?.cancellable);
+                  const cancelling = provider !== null && cancellingPull === provider;
+                  const showCancel = canCancel || cancelling;
+                  const expanded = Boolean(progress || cancelling);
+                  const error = pullCancelError?.provider === provider ? pullCancelError.message : null;
+                  return <div key={provider ?? "unlinked"} className="relative rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+                  <div className={`flex min-h-13 min-w-0 items-center gap-3 transition-[padding] duration-300 motion-reduce:transition-none ${expanded ? "" : "sm:pr-64"}`}>
                     <div className="shrink-0 rounded-2xl border border-white/10 bg-white/5 p-2 text-white/65">
                       <CloudArrowDownIcon className="h-5 w-5" />
                     </div>
@@ -4257,25 +4313,39 @@ export function SettingsPage({
                           ? "Pull your Anime and Manga library from AniList and replace local list fields that differ."
                           : "Pull your Anime and Manga library from MyAnimeList and replace local list fields that differ."}
                       </p>
+                      {provider && syncStatus.lastSuccessfulPulls[provider] && (
+                        <p className="mt-1 text-xs text-white/55">Last successful pull {formatDateTime(syncStatus.lastSuccessfulPulls[provider])}</p>
+                      )}
                     </div>
                   </div>
 
-                  <div className="flex min-w-0 shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-                    <p className="max-w-sm text-xs leading-5 text-white/50 sm:text-right" aria-live="polite">
-                      {progress
-                        ? <>{progress.label}{Number(progress.total) > 0
-                          ? ` ${Number(progress.current || 0).toLocaleString()} of ${Number(progress.total).toLocaleString()} titles.`
-                          : ""}</>
-                        : null}
-                    </p>
-                    <ProgressActionButton
+                  <div inert={!expanded} className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none ${expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
+                    <div className="min-h-0 overflow-hidden">
+                      {provider && <ProviderPullSteps provider={provider} progress={progress} cancelling={cancelling} error={error} />}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-end sm:absolute sm:right-5 sm:bottom-5 sm:mt-0">
+                    <button
+                      type="button"
                       onClick={() => provider ? pullFromRemote(provider) : undefined}
-                      disabled={!provider || (pullingProvider !== null && !waitingRetry && !failed) || ((waitingRetry || failed) && progress?.retryAllowed === false)}
-                      active={active}
-                      progress={progress}
+                      disabled={!provider || active || startingPull || cancelling || (pullingProvider !== null && pullingProvider !== provider) || ((waitingRetry || failed) && progress?.retryAllowed === false)}
+                      className={`rounded-2xl border border-white/10 px-4 py-2.5 text-sm font-semibold transition focus-visible:ring-2 focus-visible:ring-white/55 ${active || cancelling
+                        ? "cursor-progress bg-white/12 text-white"
+                        : "bg-white text-black hover:bg-white/90 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-white/35"}`}
                     >
-                      {active ? "Updating..." : waitingRetry || failed ? "Retry update" : `Update from ${providerLabel}`}
-                    </ProgressActionButton>
+                      {active || cancelling ? "Updating..." : waitingRetry && progress.retryAllowed === false && !progress.retryAt
+                        ? "Waiting for sync worker"
+                        : waitingRetry || failed ? "Retry update" : `Update from ${providerLabel}`}
+                    </button>
+                    <div inert={!showCancel} className={`grid transition-[grid-template-columns,opacity] duration-300 ease-out motion-reduce:transition-none ${showCancel ? "grid-cols-[1fr] opacity-100" : "grid-cols-[0fr] opacity-0"}`}>
+                      <div className="min-w-0 overflow-hidden">
+                        <button type="button" onClick={() => provider && void cancelPull(provider)} disabled={startingPull || cancelling}
+                          className="ml-3 whitespace-nowrap rounded-2xl border border-white/12 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white/80 transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/55 disabled:opacity-50">
+                          {cancelling ? "Cancelling..." : "Cancel pull"}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>;
                 })}

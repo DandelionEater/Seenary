@@ -3,6 +3,7 @@ const fetch = require('node-fetch');
 const MAL_API_URL = 'https://api.myanimelist.net/v2';
 const MAL_TOKEN_URL = 'https://myanimelist.net/v1/oauth2/token';
 const MAL_REQUEST_TIMEOUT_MS = 15000;
+const MAL_MAX_LIST_PAGES = 1000;
 
 function getClientId() {
   return process.env.MAL_CLIENT_ID || '';
@@ -248,6 +249,37 @@ async function getViewerMangaList(accessToken, options = {}) {
   });
 }
 
+async function getUserList(username, mediaType, limit, fields, options) {
+  const path = `/users/${encodeURIComponent(username)}/${mediaType.toLowerCase()}list`;
+  const data = [];
+  const visited = new Set();
+  let nextUrl = null;
+  let pages = 0;
+  do {
+    if (options.isCancelled?.()) {
+      const error = new Error('MyAnimeList operation cancelled.');
+      error.code = 'MAL_JOB_CANCELLED';
+      throw error;
+    }
+    await options.checkActive?.();
+    if (pages >= MAL_MAX_LIST_PAGES || (nextUrl && visited.has(nextUrl))) {
+      throw Object.assign(new Error('MyAnimeList pagination did not finish.'), { code: 'MAL_PAGINATION_LIMIT' });
+    }
+    if (nextUrl) visited.add(nextUrl);
+    const page = nextUrl
+      ? await fetchNextPage(nextUrl, options.accessToken, options.attempts)
+      : await withMalRetry(() => malRequest(path, {
+        accessToken: options.accessToken,
+        query: { fields, limit, offset: 0, nsfw: 'true' },
+      }), options.attempts);
+    pages++;
+    data.push(...(page?.data || []));
+    nextUrl = page?.paging?.next || null;
+    options.onProgress?.({ stage: 'fetching', current: data.length, total: null, mediaType });
+  } while (nextUrl && data.length < (options.maxEntries || 5000));
+  return { userName: username, data, truncated: Boolean(nextUrl) };
+}
+
 async function getUserMangaList(username, options = {}) {
   const limit = Math.min(Math.max(Number(options.limit || 100), 1), 1000);
   const fields = [
@@ -268,30 +300,7 @@ async function getUserMangaList(username, options = {}) {
     'genres',
     'list_status{status,score,num_chapters_read,num_volumes_read,is_rereading,num_times_reread,start_date,finish_date,comments,updated_at}',
   ].join(',');
-  const data = [];
-  let nextUrl = null;
-  let offset = 0;
-
-  do {
-    if (options.isCancelled?.()) {
-      const error = new Error('MyAnimeList operation cancelled.');
-      error.code = 'MAL_JOB_CANCELLED';
-      throw error;
-    }
-    const page = nextUrl
-      ? await fetchNextPage(nextUrl, options.accessToken)
-      : await malRequestWithRetry(`/users/${encodeURIComponent(username)}/mangalist`, {
-          accessToken: options.accessToken,
-          query: { fields, limit, offset, nsfw: 'true' },
-        });
-
-    data.push(...(page?.data || []));
-    nextUrl = page?.paging?.next || null;
-    offset += limit;
-    options.onProgress?.({ stage: 'fetching', current: data.length, total: null, mediaType: 'MANGA' });
-  } while (nextUrl && data.length < (options.maxEntries || 5000));
-
-  return { userName: username, data, truncated: Boolean(nextUrl) };
+  return getUserList(username, 'MANGA', limit, fields, options);
 }
 
 async function getUserAnimeList(username, options = {}) {
@@ -313,39 +322,7 @@ async function getUserAnimeList(username, options = {}) {
     'genres',
     'list_status{status,score,num_episodes_watched,is_rewatching,num_times_rewatched,start_date,finish_date,comments,updated_at}',
   ].join(',');
-  const data = [];
-  let nextUrl = null;
-  let offset = 0;
-
-  do {
-    if (options.isCancelled?.()) {
-      const error = new Error('MyAnimeList operation cancelled.');
-      error.code = 'MAL_JOB_CANCELLED';
-      throw error;
-    }
-    const page = nextUrl
-      ? await fetchNextPage(nextUrl, options.accessToken)
-      : await malRequestWithRetry(`/users/${encodeURIComponent(username)}/animelist`, {
-          accessToken: options.accessToken,
-          query: {
-            fields,
-            limit,
-            offset,
-            nsfw: 'true',
-          },
-        });
-
-    data.push(...(page?.data || []));
-    nextUrl = page?.paging?.next || null;
-    offset += limit;
-    options.onProgress?.({ stage: 'fetching', current: data.length, total: null, mediaType: 'ANIME' });
-  } while (nextUrl && data.length < (options.maxEntries || 5000));
-
-  return {
-    userName: username,
-    data,
-    truncated: Boolean(nextUrl),
-  };
+  return getUserList(username, 'ANIME', limit, fields, options);
 }
 
 async function searchAnime(search, options = {}) {
@@ -436,7 +413,7 @@ async function getPublicMediaDetails(type, id) {
   return malRequest(`/${type.toLowerCase()}/${id}`, { query: { fields: fields.join(',') } });
 }
 
-async function fetchNextPage(url, accessToken) {
+async function fetchNextPage(url, accessToken, attempts) {
   const clientId = accessToken ? getClientId() : requireClientId();
   return await withMalRetry(async () => {
     const { data } = await fetchMalJson(url, {
@@ -448,7 +425,7 @@ async function fetchNextPage(url, accessToken) {
     }, 'MyAnimeList request failed while loading the next list page.');
 
     return data;
-  });
+  }, attempts);
 }
 
 function mapStatus(status) {

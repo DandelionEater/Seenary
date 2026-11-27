@@ -30,7 +30,7 @@ import { AuthScreen } from "./components/AuthScreen";
 import { MyListPage } from "./components/MyListPage";
 import { ListEntryModal } from "./components/ListEntryModal";
 import type { AppSettings } from "./components/SettingsPage";
-import { getPreferredTitle } from "./utils/titlePreference";
+import { getPreferredTitle, type MediaTitles } from "./utils/titlePreference";
 import { useReleaseReminders } from './hooks/useReleaseReminders';
 import { ReleaseNotification } from './components/ReleaseNotification';
 import { SyncToast, type SyncToastState } from "./components/SyncToast";
@@ -62,6 +62,7 @@ import {
 import { resolveLibraryHydration } from "./utils/libraryHydration";
 
 const MediaDetails = lazy(() => import("./components/AnimeDetails"));
+const TaxonomyResultsPage = lazy(() => import("./components/TaxonomyResultsPage"));
 const SongSearchCard = lazy(() =>
   import("./components/SongSearchCard").then((module) => ({
     default: module.SongSearchCard,
@@ -177,7 +178,15 @@ type ImportOptions = {
   signal?: AbortSignal;
 };
 
-type AppView = "home" | "list" | "details" | "studio" | "artist" | "settings";
+type AppView = "home" | "list" | "details" | "studio" | "artist" | "settings" | "taxonomy";
+type TaxonomyVisit = {
+  kind: "genre" | "tag";
+  name: string;
+  source: MediaReference;
+  scrollTop: number;
+  detailsHistory: MediaReference[];
+  detailsReturnView: AppView;
+};
 type HomeMode = Exclude<LibraryDestination, "list">;
 
 const LIBRARY_MEDIA_STORAGE_KEY = "seenary.library-lens.media";
@@ -337,6 +346,8 @@ function App() {
   const [previousMediaType, setPreviousMediaType] = useState<MediaType>("ANIME");
   const [detailsReturnView, setDetailsReturnView] = useState<AppView>("home");
   const [detailsHistory, setDetailsHistory] = useState<MediaReference[]>([]);
+  const [taxonomyVisits, setTaxonomyVisits] = useState<TaxonomyVisit[]>([]);
+  const [detailsScrollTop, setDetailsScrollTop] = useState<number>();
   const [selectedStudio, setSelectedStudio] = useState<{ id: number; name: string } | null>(
     null
   );
@@ -367,7 +378,7 @@ function App() {
   const libraryLoadPromiseRef = useRef<{ generation: number; promise: Promise<void> } | null>(null);
   const homeScrollTopRef = useRef(0);
   const homeScrollElementRef = useRef<HTMLDivElement | null>(null);
-  const [recentTrayTitles, setRecentTrayTitles] = useState<Array<{ id: number; type: "ANIME" | "MANGA"; title: string }>>([]);
+  const [recentTrayTitles, setRecentTrayTitles] = useState<Array<{ id: number; type: "ANIME" | "MANGA"; titles?: MediaTitles | null; synonyms?: string[] | null }>>([]);
   const [requestedLibraryStatus, setRequestedLibraryStatus] = useState<{ status: "watching"; requestId: number } | null>(null);
   const consumeLibraryStatus = useCallback(() => setRequestedLibraryStatus(null), []);
   const listScrollTopRef = useRef(0);
@@ -1035,9 +1046,9 @@ function App() {
 
   const handlePullFromAniList = async () => {
     const result = await window.api.pullFromAniList();
-    const queued = result.ok && "queued" in result && result.queued;
+    const queued = result.ok && result.queued;
 
-    if (result.ok) {
+    if (result.ok && !queued) {
       await loadTrackedEntries();
     }
 
@@ -1058,9 +1069,9 @@ function App() {
 
   const handlePullFromMal = async () => {
     const result = await window.api.pullFromMal();
-    const queued = result.ok && "queued" in result && result.queued;
+    const queued = result.ok && result.queued;
 
-    if (result.ok) {
+    if (result.ok && !queued) {
       await loadTrackedEntries();
     }
 
@@ -1210,6 +1221,7 @@ function App() {
     setLibraryHydrationStatus("loading");
     libraryLoadFailedRef.current = false;
     setAuthUser(user);
+    setTaxonomyVisits([]);
     setShowTutorial(!user.tutorial_dismissed);
     setCurrentView(normalizedSettings.startView === "list" ? "list" : "home");
     await loadTrackedEntries();
@@ -1381,6 +1393,7 @@ function App() {
         setActiveSearchResolution(null);
       }
       setSelectedAnimeId(null);
+      setTaxonomyVisits([]);
       setCurrentView("home");
     } catch (error) {
       if (isSearchAbortError(error)) {
@@ -1395,6 +1408,7 @@ function App() {
 
       setResults(EMPTY_MEDIA_SEARCH_RESULTS);
       setSelectedAnimeId(null);
+      setTaxonomyVisits([]);
       setCurrentView("home");
       setSearchError(
         error instanceof Error && error.message
@@ -1543,7 +1557,7 @@ function App() {
   };
 
   const handleQuickAddToList = async (media: SearchMedia | SearchAnime) => {
-    const title = getPreferredTitle(media.title, settings.titleLanguage);
+    const title = getPreferredTitle(media.title, settings.titleLanguage, media.synonyms);
     const isManga = media.type === "MANGA";
     const mediaLabel = isManga ? "manga" : "anime";
 
@@ -1674,7 +1688,29 @@ function App() {
     }
 
     setSelectedAnimeId(mediaId);
+    setDetailsScrollTop(undefined);
     setSelectedMediaType(mediaType);
+    setCurrentView("details");
+  };
+
+  const handleOpenTaxonomy = (kind: TaxonomyVisit["kind"], name: string, scrollTop: number) => {
+    if (selectedAnimeId === null || !name.trim()) return;
+    setTaxonomyVisits(visits => [...visits, {
+      kind, name: name.trim(), scrollTop, detailsHistory, detailsReturnView,
+      source: { id: selectedAnimeId, type: selectedMediaType },
+    }]);
+    setCurrentView("taxonomy");
+  };
+
+  const handleBackFromTaxonomy = () => {
+    const visit = taxonomyVisits.at(-1);
+    if (!visit) return;
+    setTaxonomyVisits(visits => visits.slice(0, -1));
+    setSelectedAnimeId(visit.source.id);
+    setSelectedMediaType(visit.source.type);
+    setDetailsHistory(visit.detailsHistory);
+    setDetailsReturnView(visit.detailsReturnView);
+    setDetailsScrollTop(visit.scrollTop);
     setCurrentView("details");
   };
 
@@ -1755,6 +1791,7 @@ function App() {
   };
 
   const handleOpenHome = () => {
+    setTaxonomyVisits([]);
     setSearchQuery("");
     setResolvedSearchTerms([]);
     setActiveSearchResolution(null);
@@ -1790,6 +1827,7 @@ function App() {
 
     window.localStorage.setItem(HOME_MODE_STORAGE_KEY, destination);
     setHomeMode(destination);
+    setTaxonomyVisits([]);
     setSearchQuery("");
     setResolvedSearchTerms([]);
     setActiveSearchResolution(null);
@@ -1822,6 +1860,7 @@ function App() {
   };
 
   const handleBackFromDetails = async () => {
+    setDetailsScrollTop(undefined);
     const previousDetailsMedia = detailsHistory.at(-1);
 
     if (previousDetailsMedia !== undefined) {
@@ -1833,6 +1872,12 @@ function App() {
     }
 
     setDetailsHistory([]);
+
+    if (detailsReturnView === "taxonomy" && taxonomyVisits.length) {
+      setSelectedAnimeId(null);
+      setCurrentView("taxonomy");
+      return;
+    }
 
     if (detailsReturnView === "studio" && selectedStudio) {
       setCurrentView("studio");
@@ -1876,7 +1921,7 @@ function App() {
     window.desktopLibrary?.update({ signedIn: false, watching: [], recent: [], continueWatching: null });
     if (trayAccountId == null) return;
     const opened = (event: Event) => {
-      const item = (event as CustomEvent<{ id: number; type: "ANIME" | "MANGA"; title: string }>).detail;
+      const item = (event as CustomEvent<(typeof recentTrayTitles)[number]>).detail;
       if (!item || !Number.isSafeInteger(item.id) || !["ANIME", "MANGA"].includes(item.type)) return;
       setRecentTrayTitles(previous => [item, ...previous.filter(entry => entry.id !== item.id || entry.type !== item.type)].slice(0, 6));
     };
@@ -1890,8 +1935,9 @@ function App() {
       .sort((a, b) => Date.parse(b.updated_at || '') - Date.parse(a.updated_at || ''))
       .map(entry => ({ id: entry.anime_id, type: 'ANIME' as const, title: getPreferredTitle({ userPreferred: entry.title_preferred, english: entry.title_english, romaji: entry.title_romaji, native: entry.title_native }, settings.titleLanguage) }));
     const continuable = watching.filter(item => { const entry = privacySafeTrackedEntries.find(entry => entry.anime_id === item.id); return entry && (!entry.episodes || entry.progress < entry.episodes); });
-    const recentWatching = recentTrayTitles.find(item => continuable.some(entry => entry.id === item.id && entry.type === item.type));
-    window.desktopLibrary?.update({ signedIn: true, watching: watching.slice(0, 6), recent: recentTrayTitles, continueWatching: recentWatching ?? continuable[0] ?? null });
+    const recent = recentTrayTitles.map(({ id, type, titles, synonyms }) => ({ id, type, title: getPreferredTitle(titles, settings.titleLanguage, synonyms) }));
+    const recentWatching = recent.find(item => continuable.some(entry => entry.id === item.id && entry.type === item.type));
+    window.desktopLibrary?.update({ signedIn: true, watching: watching.slice(0, 6), recent, continueWatching: recentWatching ?? continuable[0] ?? null });
   }, [trayAccountId, privacySafeTrackedEntries, recentTrayTitles, settings.titleLanguage]);
 
   useEffect(() => {
@@ -1995,7 +2041,7 @@ function App() {
                 onDismissNotification={handleDismissNotification}
                 onClearNotifications={handleClearNotifications}
                 onLogout={handleLogout}
-                currentView={currentView}
+                currentView={currentView === "taxonomy" ? "details" : currentView}
                 onOpenHome={handleOpenHome}
                 onOpenMyList={handleOpenMyList}
                 onOpenSettings={handleOpenSettings}
@@ -2033,8 +2079,30 @@ function App() {
               )}
 
               <div className="min-h-0 flex-1">
+                {taxonomyVisits.map((visit, index) => {
+                  const shown = currentView === "taxonomy" && index === taxonomyVisits.length - 1;
+                  return (
+                    <div key={index} hidden={!shown} className="h-full">
+                      <Suspense fallback={<PageLoadingFallback />}>
+                        <TaxonomyResultsPage
+                          key={String(settings.hideAdultContent)}
+                          kind={visit.kind}
+                          name={visit.name}
+                          mediaType={visit.source.type}
+                          hideAdultContent={settings.hideAdultContent}
+                          trackedEntries={visit.source.type === "MANGA" ? privacySafeTrackedMangaEntries : privacySafeTrackedEntries}
+                          titleLanguage={settings.titleLanguage}
+                          onBack={handleBackFromTaxonomy}
+                          onSelectMedia={id => handleOpenMediaDetails(id, visit.source.type)}
+                          onQuickAdd={handleQuickAddToList}
+                          onEditEntry={setEditingListEntry}
+                        />
+                      </Suspense>
+                    </div>
+                  );
+                })}
                 <Suspense fallback={<PageLoadingFallback />}>
-                  {currentView === "artist" && selectedArtist ? (
+                  {currentView === "taxonomy" ? null : currentView === "artist" && selectedArtist ? (
                     <ArtistCatalogPage
                       artist={selectedArtist}
                       hideAdultContent={settings.hideAdultContent}
@@ -2061,6 +2129,8 @@ function App() {
                     mediaId={selectedAnimeId}
                     mediaType={selectedMediaType}
                     onBack={handleBackFromDetails}
+                    initialScrollTop={detailsScrollTop}
+                    onSelectTaxonomy={handleOpenTaxonomy}
                     onSelectMedia={handleOpenMediaDetails}
                     onOpenStudio={handleOpenStudioCatalog}
                     onListChanged={loadTrackedEntries}
